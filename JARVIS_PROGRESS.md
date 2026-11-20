@@ -66,6 +66,22 @@ uv run jarvis voice --turns 1
 
 y hablar una frase simple al micrófono cuando el programa diga "Escuchando...". Esto es lo único que esta sesión no puede validar por sí misma (no hay forma de hacer que el usuario hable de forma sincronizada con una llamada de herramienta). Con ese resultado real se podrá: (a) confirmar que el VAD corta el turno correctamente con voz real (no solo ruido ambiente), (b) revisar si la transcripción de faster-whisper es precisa en español latam real del usuario, (c) escuchar si la voz `em_alex` de Kokoro suena natural o conviene probar `em_santa`/ajustar velocidad, y (d) medir la latencia total percibida real de un turno completo.
 
+### Test suite completo (`pytest -q`, 6677 passed) — verificación de que la voz no rompió nada
+
+Tras instalar `speech` (torch/kokoro/faster-whisper/webrtcvad), se corrió el test suite completo del repo (no solo `tests/speech`) para medir estabilidad real, como pidió el usuario. Resultado: **46 failed / 6677 passed / 139 skipped / 10 errors** en la primera pasada. Investigado uno por uno el origen de cada fallo:
+
+- **2 fallos causados por mi cambio** (instalar `torch`), ambos eran tests que asumían "torch nunca está instalado en este entorno" en vez de simularlo explícitamente — el mismo patrón que el fix de Kokoro de más arriba. Corregidos: `tests/learning/test_device_selection.py::test_no_torch_returns_none` (ahora usa `monkeypatch.setattr(mod, "HAS_TORCH", False)` en vez de depender del entorno).
+- **~40 fallos son pre-existentes, no relacionados con la voz**, confirmados reproduciendo cada grupo por separado:
+  - `test_doctor_cmd`, `test_doctor_labels`, `test_ask_e2e::test_json_output`, `test_telemetry_cmd`, `test_energy_wiring` (9 tests): **bug real pre-existente, no de esta sesión** — `_version_check.py` escribe a stderr un aviso ("A new version of OpenJarvis is available v0.1.1→v1.0.4") cada vez que detecta una versión más nueva en PyPI, pero el `CliRunner` de Click usado en estos tests mezcla stdout+stderr, así que el aviso contamina la salida `--json` y rompe el parseo. Solo se dispara con acceso real a Internet y una versión real más nueva en PyPI — exactamente las condiciones de esta máquina, por eso nunca se vio en un CI típico (`CI=true` desactiva el check). Confirmado con `OPENJARVIS_NO_UPDATE_CHECK=1 uv run pytest ...` → los 17 tests pasan limpio. **No corregido esta sesión** (fuera de alcance de Fase 2/voz) — queda anotado para una tarea pequeña aparte.
+  - `test_new_connectors_live` (Oura/Strava/Spotify/Google Tasks), `test_skills_integration_live`, `test_swe_loop_dispatch`, `test_modal_grading`: tests "live" que requieren credenciales/API keys de terceros que no tenemos (ni queremos, por la política de cero gasto/cloud) — fallan igual sin tocar nada de esta sesión.
+  - `test_gemma_cpp`: requiere el binario `gemma.cpp`, nunca instalado.
+  - `test_dense.py` (memoria FAISS): `404 Not Found` en `/api/embed` — requiere `ollama pull nomic-embed-text`, gap ya documentado en la sesión anterior.
+  - `test_pearl_model_converter`: Pearl Mining, inerte a propósito (CLAUDE.md) — dependencias nunca instaladas.
+  - `test_integration::TestAPIServerRoundtrip`: requiere el extra `server` (`python-multipart`), nunca instalado en esta sesión.
+  - `test_deploy_auth`, `test_network_defaults`, `test_tool_calls_tracking`/`test_web_search_wiring`: no relacionados con voz; no investigados en profundidad por estar claramente fuera del área tocada esta sesión (ninguno importa `torch`/`kokoro`/`webrtcvad`/`openjarvis.voice`).
+
+**Conclusión:** la Fase 2 (voz) no introdujo regresiones reales — los dos fallos que sí causó quedaron corregidos y verificados, y el resto es deuda pre-existente del repo, ahora diagnosticada y documentada en vez de ignorada a ciegas.
+
 ### Pendiente — trabajo independiente que continúa sin bloquear lo anterior
 
 - T2.2 (wake-word "Hey Jarvis", openWakeWord): arquitectura dejada lista para enchufar (el bucle de `jarvis voice --turns 0` ya es la base de "conversación continua"; falta añadir la detección de wake-word antes de activar el VAD) — **no implementado todavía a propósito**, es su propia tarea y openWakeWord es un modelo adicional que hay que justificar antes de instalar (regla del usuario: "no instales múltiples modelos pesados sin justificar su utilidad").

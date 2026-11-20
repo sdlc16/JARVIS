@@ -6,19 +6,25 @@ from __future__ import annotations
 class TestSelectTorchDevice:
     """Tests for _select_torch_device() logic in orchestrator trainers.
 
-    Since torch is not installed in the test environment, we test the
-    selection logic directly rather than through the function (which
-    returns None when torch is absent).
+    Torch may or may not be installed in the test environment (it's a
+    legitimate transitive dependency of the Kokoro TTS backend), so the
+    "no torch" case is forced explicitly via monkeypatch rather than
+    assumed from the environment.
     """
 
-    def test_no_torch_returns_none(self):
-        """Without torch, _select_torch_device returns None."""
-        from openjarvis.learning.intelligence.orchestrator.sft_trainer import (
-            _select_torch_device,
-        )
+    def test_no_torch_returns_none(self, monkeypatch):
+        """Without torch, _select_torch_device returns None.
 
-        # torch is not installed in test env, so HAS_TORCH is False
-        assert _select_torch_device() is None
+        Torch is now a legitimate dependency in this project (Kokoro TTS
+        pulls it in, see pyproject.toml ``speech`` extra), so it may well
+        be installed in the test environment. We force the "no torch"
+        codepath explicitly instead of relying on its absence.
+        """
+        import openjarvis.learning.intelligence.orchestrator.sft_trainer as mod
+
+        monkeypatch.setattr(mod, "HAS_TORCH", False)
+        monkeypatch.setattr(mod, "torch", None)
+        assert mod._select_torch_device() is None
 
     def test_cuda_preferred(self):
         """CUDA is selected when available (logic test)."""
