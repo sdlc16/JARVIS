@@ -47,7 +47,7 @@ Ver `CLAUDE_GEMINI_WORKFLOW.md` para el detalle completo. Resumen: Claude diseñ
 
 ## Estado del proyecto
 
-La implementación **está autorizada y en curso** (el usuario autorizó pasar de planificación a código). El trabajo avanza por módulos siguiendo `DEVELOPMENT_TASKS.md`; el estado real y las evidencias viven en `JARVIS_PROGRESS.md` (léelo al empezar cualquier sesión). No se vuelve a replanificar la arquitectura completa salvo que surja un bloqueo real.
+La implementación **está autorizada y en curso**. Entregado y verificado: voz con VAD robusto y confirmación hablada, wake-word y barge-in (desactivados por defecto hasta validarlos con voz y audio físicos), puente nativo de Windows autenticado y 11 herramientas, runtime unificado (`openjarvis.jarvis`) con permisos/historial/memoria, documentos locales (`jarvis docs`), interfaz gráfica local (`jarvis gui`) y arranque con un clic (`scripts/start-jarvis.ps1`). **No implementado**: Brave/YouTube, visión/OCR, hábitos/proactividad, modo gaming, hotkey global. El estado real y las evidencias viven en `JARVIS_PROGRESS.md` (léelo al empezar cualquier sesión); el manual de uso en `JARVIS_USAGE.md`. No se vuelve a replanificar la arquitectura salvo bloqueo real.
 
 ## Metodología permanente de desarrollo y QA — vale para toda sesión y todo modelo
 

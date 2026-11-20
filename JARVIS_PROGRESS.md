@@ -2,28 +2,66 @@
 
 Memoria de trabajo entre sesiones. Léelo junto con `CLAUDE.md` al empezar cualquier sesión nueva, antes de tocar nada.
 
-## 🚧 Desarrollo integral de JARVIS (2026-11-21) — estado vivo (LEER PRIMERO)
+## ✅ INFORME FINAL — Desarrollo integral de JARVIS (2026-11-20) — LEER PRIMERO
 
-**Encargo:** completar JARVIS (voz con wake-word/barge-in, memoria, agente con herramientas, control de Windows, documentos, GUI, permisos/logs, estabilidad). Plan y estado por bloque (se actualiza al cerrar cada uno; "verificado" = con prueba real, no solo código):
+**Último commit local verificado:** ver `git log -1` (rama `master`; **sin push**). Respaldo de recuperación `.zip`/`.bundle` conservado en la raíz (fuera de Git).
 
-| Bloque | Estado | Evidencia |
-|---|---|---|
-| Cierre de turno de voz + QA + `jarvis test` | ✅ verificado | ver sección siguiente |
-| Fix de las 2 pruebas fallidas (causas raíz) | ✅ verificado | abajo |
-| **Puente de Windows real** (servidor autenticado, DPAPI, política, 22 acciones) | ✅ verificado en Windows real | `windows_bridge/selftest.py` 36/36 (4 ejecuciones seguidas sin fallo) + 46 pruebas lógicas con mutación |
-| Cliente WSL + 11 herramientas del agente con confirmación | ✅ verificado | 17 pruebas con HTTP real + `ToolExecutor`; llamada real WSL→Windows 35 ms |
-| Prompt/runtime JARVIS (anti-alucinación), confirmación por voz, precarga Ollama, prompt Whisper | ✅ verificado E2E con micro virtual | `jarvis test --suite full`: 634 passed. E2E real (voz sintética→Whisper→qwen3:8b→puente→Notepad real): consulta, abrir app y escritura con permiso por voz (`approved/voz`); contenido real de la ventana = "Hola Mundo" |
-| Wake-word (openWakeWord `hey_jarvis` + modo STT) | ✅ verificado con voz sintética; **default `off`** hasta validar con tu voz | 0 falsos positivos en 10 min de ruido y 24 frases negativas; recall 100 % con voces inglesas, **0 % con voces españolas sintetizadas** → por eso hay modo `stt` alternativo; 32 tests con mutación |
-| Barge-in (hablar encima de JARVIS) | ✅ verificado con PulseAudio real (sumidero nulo); **default `off`** hasta validar con altavoces/micro físicos | corte 0.5–1.1 s tras empezar a hablar el usuario, 0 falsos disparos con la propia voz de JARVIS (25 s), el siguiente turno conserva la frase entera; 21 tests con mutación |
-| Memoria persistente administrable + documentos locales | ✅ verificado E2E real (2 sesiones separadas, qwen3:8b) | `jarvis docs index/search/list/remove/remember/facts/forget/clear`; 20 tests (backend Rust real, mutación); el agente recupera hechos y documentos entre sesiones y dice «no lo tengo guardado» si no hay dato |
-| GUI completa (chat, voz, permisos, historial, memoria, logs, ajustes, estado) | ✅ verificada en navegador real (Edge/Chromium) con Ollama y puente reales; **falta tu clic de aprobación y probar la voz con el micro real** | `jarvis gui`; 23 tests de API (token, Host, Origin, CSP, SSE, permisos, memoria, ajustes, voz) con mutación de seguridad; chat con herramienta real, banner de permiso, pestañas y vista móvil comprobados |
-| Arranque con un clic, integración E2E, rendimiento, informe final | ⏳ pendiente | |
+### 1. Operativo y verificado (con la evidencia entre paréntesis)
+| Bloque | Evidencia |
+|---|---|
+| Voz: VAD robusto, cierre de turno, reintentos, logs sin texto privado | `tests/voice` + mutación + 2 sesiones reales del usuario |
+| Voz E2E: voz → Whisper → qwen3:8b → puente → Windows real → permiso por voz → acción verificada → respuesta hablada | micro **virtual** (voz sintética) con modelos, puente y Notepad reales: «Hola Mundo» comprobado en la ventana |
+| Puente nativo de Windows (autenticado, DPAPI, política, papelera) + 11 herramientas con confirmación | `windows_bridge/selftest.py` **36/36 en Windows real** (última vez hoy) |
+| Runtime único (voz/GUI/CLI): permisos, historial SQLite, anti-alucinación, memoria automática | `tests/jarvis` (106 pruebas) + E2E real |
+| Memoria persistente administrable + documentos locales | `jarvis docs`, GUI; E2E real entre dos sesiones; «no lo tengo guardado» si no hay dato |
+| Interfaz gráfica local (chat, voz, permisos, memoria, historial, registros, ajustes, estado) | 23 pruebas de API + navegador real (escritorio y móvil) |
+| Arranque con un clic y parada | `scripts/start-jarvis.ps1`/`stop-jarvis.ps1` probados 3 veces (frío, reinicio con instancia única, parada); acceso directo en el Escritorio |
+| Wake-word y barge-in (**desactivados por defecto**) | sintético / PulseAudio real; ver abajo |
+
+### 2. Pruebas ejecutadas (hoy)
+- `jarvis test --suite full`: **ruff OK + 739 passed**.
+- Suite completa del repo: **26 failed / 7227 passed / 52 skipped / 10 errors** frente al baseline inicial 46 / 6677 y al intermedio 28 / 6983. **0 fallos nuevos**; los 36 fallos+errores restantes son los preexistentes (credenciales/servicios en vivo, gemma.cpp, pearl, dispatch cloud, embeddings que necesitan `nomic-embed-text`, hybrid) y no pertenecen a lo desarrollado. Los 2 fallos que yo había introducido (`test_decay`, `test_voice_section_is_loaded_from_toml`) están corregidos en su causa raíz (ver abajo).
+- Mutación: la lógica nueva crítica (VAD, wake-word, barge-in, knowledge, API de seguridad) se comprobó reintroduciendo defectos y viendo fallar las pruebas.
+- Distinción de evidencia: *simulado* = motor/micro/altavoz falsos (lógica); *grabación controlada* = fixtures sintéticos + Whisper real; *entorno real* = Ollama/GPU/puente/Windows/PulseAudio/navegador. **Voz humana real: NO probada** (ver §4).
+
+### 3. No completado (y por qué)
+| Funcionalidad | Estado |
+|---|---|
+| Brave/YouTube (T4.x), visión/OCR (T5.x), hábitos y proactividad (T6.2/3/5), modo gaming (T7.2–4), hotkey global (T2.3) | **No implementado**: fuera del encargo prioritario de esta entrega |
+| Wake-word en español | El modelo `hey_jarvis` es inglés: 100 % con voces sintéticas inglesas, **0 % con las españolas sintetizadas**. Depende de tu acento → desactivada; alternativa `stt` incluida |
+| Barge-in con hardware físico | Verificado con PulseAudio real, no con tus altavoces/micro (el eco real lo decide) → desactivado |
+| Acceso móvil | **Arquitectura lista** (API con token, sin estado en el navegador, SSE), pero no se expone a la red: habría que añadir TLS/emparejamiento antes; hoy solo `127.0.0.1` por tu regla de no exponer servicios |
+| Clic humano de «Permitir» en la GUI | El entorno me impidió pulsar un aviso de permiso (correcto). Probado por API con runtime y puente reales |
+
+### 4. Lo único que necesita tu presencia
+Una sola sesión de ~10 min con micro y altavoces reales: ver «Lo único que necesita tu presencia» en `JARVIS_USAGE.md` (clic de permiso, voz larga/corta, permiso hablado, wake-word 10 intentos, barge-in).
+
+### 5. Cómo usarlo
+`JARVIS_USAGE.md`. Resumen: doble clic en **JARVIS** (Escritorio) → ventana; `scripts\stop-jarvis.ps1` para parar; `uv run --no-sync jarvis test --suite full` para validar.
+
+### 6. Rendimiento medido (RTX 4060 8 GB, 32 GB RAM; WSL limitado a 15.5 GB)
+Arranque con un clic 43–67 s (carga del modelo). qwen3:8b: 5.77 GiB en VRAM (GPU total 7.4–7.7 de 8 GB con Windows). RAM de WSL en uso ≈ 1.3 GB (STT/TTS en CPU). Voz: STT 0.7–1.0 s, agente 1–7 s (acción con herramienta 18–21 s), primer audio 0.8–1.9 s, precarga Ollama 4 s, barge-in corta en 0.5–1.1 s.
+
+### 7. Seguridad revisada
+Puente: solo interfaz WSL, token DPAPI, origen validado, política de capacidades, `confirmed` obligatorio en sensibles, raíces de archivos, papelera en vez de borrado, `win+*` bloqueado. GUI: `127.0.0.1`, token por ejecución en cabecera, Host/Origin, CSP, sin `/docs`; riesgo alto siempre pregunta. Memoria: rutas validadas con `resolve()`, sin enlaces que escapen, archivos sensibles/binarios omitidos; el contenido recuperado se entrega como DATOS no órdenes. Registros sin texto privado/tokens. Sin push, sin servicios públicos, sin tocar Defender/firewall, Windows puede suspenderse.
+
+### Estado por bloque (histórico de la ejecución)
+| Bloque | Estado |
+|---|---|
+| Cierre de turno de voz + QA + `jarvis test` | ✅ |
+| 2 pruebas fallidas (causas raíz) | ✅ |
+| Puente de Windows real + cliente + 11 herramientas | ✅ |
+| Runtime/prompt/confirmaciones/precarga/Whisper prompt | ✅ |
+| Wake-word · Barge-in | ✅ verificado (desactivados por defecto) |
+| Memoria + documentos | ✅ |
+| GUI | ✅ (falta tu clic y la voz con micro real) |
+| Arranque, E2E, rendimiento, informe | ✅ |
 
 ### Hallazgos del E2E con micro virtual (voz sintética inyectada; *simulado* en la entrada, *real* en modelos/puente/Windows)
-1. **El modelo copiaba estado viejo del historial sin llamar herramientas** (ventanas, "ya está abierto"); con historial limpio las usaba. Medido con sonda (`results/probe_hist.py`): sin historial → herramienta; con historial → ninguna. Fix: solo la última respuesta va completa, las anteriores se acortan con nota de caducidad, y cada turno con historial lleva una pista de sistema (no se guarda). Con el fix: herramienta en ambos casos.
-2. **Afirmó "Escribí…" sin ejecutar nada** (ventana vacía comprobada). Guarda en el runtime: si afirma una acción sin herramientas, reintenta una vez; si persiste, responde que no puede confirmarlo (tests + escenarios).
-3. **hwnd inventado** → el error de la herramienta ahora lista las ventanas reales; **`input.type` no verificado** → reintento automático por `paste` (misma ventana ya aprobada).
-4. **"sí/hazlo" corto transcrito mal** ("¡Athlo!") → prompt de Whisper propio para confirmaciones + tolerancia difusa a "hazlo/adelante/confirmo" (jamás asume sí ante palabras irreconocibles; cualquier "no" gana).
+1. **El modelo copiaba estado viejo del historial sin llamar herramientas** (ventanas, «ya está abierto»); con historial limpio sí las usaba. Medido con sonda: sin historial → herramienta; con historial → ninguna. Fix: pista de sistema por turno («no reutilices datos de mensajes anteriores», no se guarda en el historial). *(Un prefijo de «caducado» en el historial se probó y se descartó: el modelo acabó copiándolo en sus respuestas.)*
+2. **Afirmó «Escribí…» sin ejecutar nada** (ventana vacía comprobada). Guarda en el runtime: si afirma una acción sin herramientas, reintenta una vez; si persiste, responde que no puede confirmarlo.
+3. **hwnd inventado** → el error de la herramienta lista las ventanas reales; **`input.type` no verificado** → reintento automático por `paste` (misma ventana ya aprobada).
+4. **«sí/hazlo» corto transcrito mal** («¡Athlo!») → prompt de Whisper propio para confirmaciones + tolerancia difusa a «hazlo/adelante/confirmo» (jamás asume sí ante palabras irreconocibles; cualquier «no» gana).
 5. Latencias medidas (RTX 4060): STT 0.7–1.0 s, agente 3–7 s (con herramienta 18–21 s en escritura), primer audio 0.8–1.9 s, precarga Ollama 4 s.
 
 ### Barge-in y wake-word — hallazgos medidos

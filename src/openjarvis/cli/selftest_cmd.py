@@ -24,6 +24,8 @@ from rich.console import Console
 LINT_PATHS = [
     "src/openjarvis/voice",
     "src/openjarvis/cli/voice_cmd.py",
+    "src/openjarvis/cli/gui_cmd.py",
+    "src/openjarvis/cli/docs_cmd.py",
     "src/openjarvis/cli/selftest_cmd.py",
     "src/openjarvis/speech",
     "src/openjarvis/engine/ollama.py",
@@ -37,6 +39,8 @@ LINT_PATHS = [
     "tests/voice",
     "tests/bridge",
     "tests/jarvis",
+    "tests/cli/test_docs_cmd.py",
+    "tests/cli/test_gui_cmd.py",
 ]
 
 SUITES: dict[str, list[str]] = {
@@ -47,6 +51,8 @@ SUITES: dict[str, list[str]] = {
         "tests/voice",
         "tests/bridge",
         "tests/jarvis",
+        "tests/cli/test_docs_cmd.py",
+        "tests/cli/test_gui_cmd.py",
         "tests/tools/test_windows_tools.py",
         "tests/speech",
         "tests/learning/test_device_selection.py",
@@ -56,6 +62,8 @@ SUITES: dict[str, list[str]] = {
         "tests/voice",
         "tests/bridge",
         "tests/jarvis",
+        "tests/cli/test_docs_cmd.py",
+        "tests/cli/test_gui_cmd.py",
         "tests/tools/test_windows_tools.py",
         "tests/sessions",
         "tests/speech",

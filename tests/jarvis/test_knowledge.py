@@ -174,7 +174,7 @@ def test_natural_questions_do_not_return_noise(kb):
 def test_default_roots_ignore_windows_profiles_without_permission(
     monkeypatch, tmp_path
 ):
-    """Fallo real: /mnt/c/Users/Administrador daba PermissionError y tumbaba `jarvis gui`."""
+    """Fallo real: un perfil de Windows sin permiso tumbaba `jarvis gui`."""
     from pathlib import Path
 
     real_is_dir = Path.is_dir

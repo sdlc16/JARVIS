@@ -141,3 +141,7 @@ jarvis-optimistic-bardeen-bdfwrm.bundle
 jarvis-optimistic-bardeen-bdfwrm.zip
 # Mismo artefacto visto desde Windows (':' mapeado a U+F03A por WSL)
 memory
+
+# respaldos de recuperacion de JARVIS (fuera de Git)
+jarvis-*.bundle
+jarvis-*.zip

@@ -16,8 +16,18 @@ Leyenda de responsable: **C** = Claude Code, **G** = Gemini/Antigravity, **U** =
 | T2.4 STT→agente→TTS | Hecho (`jarvis voice`); latencia a validar con voz humana | primera prueba real del usuario OK |
 | T2.4b streaming TTS | Hecho (primer audio 0.6–0.9 s) | medido en `JARVIS_PROGRESS.md` |
 | T2.6 errores de reconocimiento | Hecho | transcripción vacía/sin voz/captura/STT/agente/TTS clasificados y reintentables |
-| T2.2, T2.3, T2.5 | Pendiente | wake-word, hotkey, barge-in |
-| T3.x, resto | Pendiente | |
+| T2.2 wake-word | Hecho con voz sintética (openWakeWord `hey_jarvis` + modo STT); **default off; falta validar con tu voz** (0 % con voces españolas sintéticas, 100 % con inglesas) | `tests/voice/test_wakeword.py`, `JARVIS_PROGRESS.md` |
+| T2.3 hotkey global | Pendiente | requiere el puente de input (T3.4 ya existe); no implementado |
+| T2.5 barge-in | Hecho y verificado con PulseAudio real; **default off; falta validar con altavoces y micro físicos** | `tests/voice/test_bargein.py` (21), medición real en `JARVIS_PROGRESS.md` |
+| T3.1–T3.7 puente Windows + tools | Hecho — Windows real 36/36 | `windows_bridge/selftest.py`, `tests/bridge`, `tests/tools/test_windows_tools.py` |
+| T6.1/T6.4 memoria persistente y administración | Hecho (documentos + hechos, CLI `jarvis docs`, GUI) | `tests/jarvis/test_knowledge.py`, E2E real entre sesiones |
+| T6.2/T6.3/T6.5 hábitos y proactividad | **No implementado** | fuera del alcance de esta entrega |
+| T4.x Brave/YouTube, T5.x visión/OCR | **No implementado** | fuera del alcance de esta entrega |
+| T7.1 monitor de hardware | Parcial: GPU/VRAM/RAM/Ollama en la pestaña Estado de la GUI | `jarvis gui` |
+| T7.2–T7.4 modo gaming | **No implementado** | |
+| T8.1 E2E | Hecho para voz→acción Windows→verificación (micro virtual) y memoria entre sesiones | `JARVIS_PROGRESS.md` |
+| T8.2 seguridad | Revisión hecha (puente, GUI, permisos, logs); ver `JARVIS_PROGRESS.md` | |
+| T8.3 documentación | `JARVIS_USAGE.md` (uso), `JARVIS_PROGRESS.md` (estado real) | |
 
 **Criterios de aceptación ampliados de T2.1/T2.6 (tras el fallo real de cierre de turno del 2026-11-20):** una pausa interna menor que `voice.silence_timeout_ms` (1400 ms por defecto, configurable) no parte la frase; la frase completa llega íntegra a faster-whisper (prueba con Whisper real sobre grabación controlada); el ruido ambiente medido (−62 dBFS) y las ráfagas no abren turnos falsos ni alargan la espera más allá de `no_speech_timeout_ms`; un micrófono mudo/bloqueado/ausente se diagnostica con causa; una transcripción vacía **no** cierra la sesión y se reintenta; las pruebas demuestran que pueden fallar (mutación).
 

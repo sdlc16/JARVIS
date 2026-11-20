@@ -6,18 +6,75 @@ la ventana de la aplicación en el navegador de Windows (Edge en modo app).
 
 from __future__ import annotations
 
+import os
 import secrets
+import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
+from pathlib import Path
 
 import click
 from rich.console import Console
 
 from openjarvis.cli._banner import print_banner
+
+
+def pidfile_path() -> Path:
+    from openjarvis.core.config import DEFAULT_CONFIG_DIR
+
+    return DEFAULT_CONFIG_DIR / "gui.pid"  # solo el PID: sin token ni secretos
+
+
+def write_pidfile() -> None:
+    p = pidfile_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def clear_pidfile() -> None:
+    try:
+        pidfile_path().unlink()
+    except OSError:
+        pass
+
+
+def _is_our_gui(pid: int) -> bool:
+    """El PID existe Y es una interfaz de JARVIS (no un PID reutilizado)."""
+    try:
+        cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode()
+    except OSError:
+        return False
+    return "jarvis" in cmd and "gui" in cmd
+
+
+def running_instance() -> int | None:
+    try:
+        pid = int(pidfile_path().read_text().strip())
+    except (OSError, ValueError):
+        return None
+    if pid != os.getpid() and _is_our_gui(pid):
+        return pid
+    clear_pidfile()  # PID huérfano de una ejecución anterior
+    return None
+
+
+def stop_instance(pid: int, timeout: float = 8.0) -> bool:
+    if not _is_our_gui(pid):
+        return False
+    os.kill(pid, signal.SIGTERM)
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if not _is_our_gui(pid):
+            clear_pidfile()
+            return True
+        time.sleep(0.2)
+    os.kill(pid, signal.SIGKILL)
+    clear_pidfile()
+    return True
 
 
 def _free_port(preferred: int) -> int:
@@ -48,6 +105,14 @@ def open_window(url: str) -> bool:
 @click.command()
 @click.option("--port", default=8765, type=int, help="Puerto local preferido.")
 @click.option("--open", "open_it", is_flag=True, help="Abrir la ventana al iniciar.")
+@click.option(
+    "--replace",
+    is_flag=True,
+    help="Si ya hay una interfaz en marcha, cerrarla y arrancar esta.",
+)
+@click.option(
+    "--stop", "stop_only", is_flag=True, help="Solo cierra la interfaz en marcha."
+)
 @click.option("-m", "--model", "model_name", default=None, help="Modelo (Ollama).")
 @click.option(
     "--no-bridge-tools",
@@ -55,11 +120,35 @@ def open_window(url: str) -> bool:
     help="Sin herramientas de Windows (solo chat y memoria).",
 )
 def gui(
-    port: int, open_it: bool, model_name: str | None, no_bridge_tools: bool
+    port: int,
+    open_it: bool,
+    replace: bool,
+    stop_only: bool,
+    model_name: str | None,
+    no_bridge_tools: bool,
 ) -> None:
     """Abre la interfaz gráfica de JARVIS (solo local)."""
-    print_banner(quiet=False)
     console = Console(stderr=True)
+    old = running_instance()
+    if stop_only:
+        console.print(
+            "[green]Interfaz detenida.[/green]"
+            if old and stop_instance(old)
+            else "[dim]No había ninguna interfaz en marcha.[/dim]"
+        )
+        return
+    if old is not None:
+        if not replace:
+            console.print(
+                f"[yellow]Ya hay una interfaz en marcha (pid {old}).[/yellow] "
+                "Usa --replace para reiniciarla o --stop para cerrarla."
+            )
+            sys.exit(3)
+        stop_instance(old)
+    # PID registrado YA (antes de cargar modelos): --stop/--replace funcionan
+    # aunque la interfaz aun este arrancando.
+    write_pidfile()
+    print_banner(quiet=False)
 
     import uvicorn
 
@@ -138,9 +227,16 @@ def gui(
     if open_it:
         threading.Timer(1.5, lambda: open_window(url)).start()
     try:
-        uvicorn.run(app, host="127.0.0.1", port=real_port, log_level="warning")
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=real_port,
+            log_level="warning",
+            timeout_graceful_shutdown=3,  # el SSE abierto no bloquea el cierre
+        )
     finally:
         voice.stop()
+        clear_pidfile()
         time.sleep(0.1)
 
 
@@ -152,8 +248,6 @@ def _preload(runtime, console: Console) -> None:
 
 
 def _bridge_log_candidates():
-    from pathlib import Path
-
     users = Path("/mnt/c/Users")
     try:
         entries = list(users.iterdir()) if users.is_dir() else []
