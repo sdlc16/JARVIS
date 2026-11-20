@@ -12,11 +12,18 @@ Memoria de trabajo entre sesiones. Léelo junto con `CLAUDE.md` al empezar cualq
 | Fix de las 2 pruebas fallidas (causas raíz) | ✅ verificado | abajo |
 | **Puente de Windows real** (servidor autenticado, DPAPI, política, 22 acciones) | ✅ verificado en Windows real | `windows_bridge/selftest.py` 36/36 (4 ejecuciones seguidas sin fallo) + 46 pruebas lógicas con mutación |
 | Cliente WSL + 11 herramientas del agente con confirmación | ✅ verificado | 17 pruebas con HTTP real + `ToolExecutor`; llamada real WSL→Windows 35 ms |
-| Prompt/runtime JARVIS (anti-alucinación de herramientas), confirmaciones por voz/GUI | ⏳ en curso | el probe real con `qwen3:8b` mostró 1 de 3 respuestas alucinadas (inventó ventanas) |
-| Wake-word, barge-in, precarga de Ollama, `initial_prompt` Whisper | ⏳ pendiente | |
+| Prompt/runtime JARVIS (anti-alucinación), confirmación por voz, precarga Ollama, prompt Whisper | ✅ verificado E2E con micro virtual | `jarvis test --suite full`: 634 passed. E2E real (voz sintética→Whisper→qwen3:8b→puente→Notepad real): consulta, abrir app y escritura con permiso por voz (`approved/voz`); contenido real de la ventana = "Hola Mundo" |
+| Wake-word, barge-in | ⏳ pendiente | |
 | Memoria persistente administrable + documentos locales | ⏳ pendiente | |
 | GUI completa (chat, voz, permisos, historial, logs, ajustes) | ⏳ pendiente | |
 | Arranque con un clic, integración E2E, rendimiento, informe final | ⏳ pendiente | |
+
+### Hallazgos del E2E con micro virtual (voz sintética inyectada; *simulado* en la entrada, *real* en modelos/puente/Windows)
+1. **El modelo copiaba estado viejo del historial sin llamar herramientas** (ventanas, "ya está abierto"); con historial limpio las usaba. Medido con sonda (`results/probe_hist.py`): sin historial → herramienta; con historial → ninguna. Fix: solo la última respuesta va completa, las anteriores se acortan con nota de caducidad, y cada turno con historial lleva una pista de sistema (no se guarda). Con el fix: herramienta en ambos casos.
+2. **Afirmó "Escribí…" sin ejecutar nada** (ventana vacía comprobada). Guarda en el runtime: si afirma una acción sin herramientas, reintenta una vez; si persiste, responde que no puede confirmarlo (tests + escenarios).
+3. **hwnd inventado** → el error de la herramienta ahora lista las ventanas reales; **`input.type` no verificado** → reintento automático por `paste` (misma ventana ya aprobada).
+4. **"sí/hazlo" corto transcrito mal** ("¡Athlo!") → prompt de Whisper propio para confirmaciones + tolerancia difusa a "hazlo/adelante/confirmo" (jamás asume sí ante palabras irreconocibles; cualquier "no" gana).
+5. Latencias medidas (RTX 4060): STT 0.7–1.0 s, agente 3–7 s (con herramienta 18–21 s en escritura), primer audio 0.8–1.9 s, precarga Ollama 4 s.
 
 ### Causas raíz de las 2 pruebas fallidas de la suite completa (clasificación y fix)
 - `test_voice_section_is_loaded_from_toml` — **código del test (mío)**: `load_config` está decorada con `functools.lru_cache`, así que devuelve la configuración cacheada por *cualquier* test anterior del proceso e ignora `OPENJARVIS_CONFIG`; pasaba aislado (primera llamada) y fallaba en la suite completa. Reproducido por bisección (falla tras `tests/sdk`, `security`, `operators`, `sandbox`; no tras `core`/`prompt`/…). Fix: fixture que limpia la caché antes y después (también evita filtrar mi config a otros tests). Verificado en los 4 órdenes que fallaban.

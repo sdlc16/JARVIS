@@ -183,6 +183,21 @@ def test_unverified_typing_is_reported_as_a_failure(env, monkeypatch):
     assert '"verified":false' in r.content and "rápido" in r.content
 
 
+def test_failed_typing_is_retried_once_with_paste_and_reported_truthfully(
+    env, monkeypatch
+):
+    from jarvis_bridge import uia
+
+    reads = iter([{"text": "Hola "}, {"text": "Hola Mundo"}])
+    monkeypatch.setattr(uia, "run", lambda op, hwnd, **kw: {"result": next(reads)})
+    client, _, _ = env
+    r = executor(client, approve=True).execute(
+        call("windows_type", text="Hola Mundo", title="Calculadora")
+    )
+    assert r.success and r.metadata.get("retried_with") == "paste"
+    assert '"verified":true' in r.content
+
+
 def test_bridge_rejections_become_actionable_tool_errors(env):
     client, _, _ = env
     r = executor(client, approve=True).execute(
@@ -193,6 +208,16 @@ def test_bridge_rejections_become_actionable_tool_errors(env):
         call("windows_windows", action="focus", title="Bloc de notas")
     )
     assert not r.success and "window_ambiguous" in r.content
+
+
+def test_invented_hwnd_error_lists_the_real_windows(env):
+    client, win, _ = env
+    r = executor(client, approve=True).execute(
+        call("windows_type", text="x", hwnd=999999)
+    )
+    assert not r.success and "window_not_found" in r.content
+    assert "Ventanas abiertas ahora" in r.content and "Calculadora" in r.content
+    assert not any(c[0] == "type" for c in win.calls)  # no se tecleo en ningun sitio
 
 
 def test_missing_target_or_params_never_hit_the_bridge(env):

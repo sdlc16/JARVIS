@@ -1417,6 +1417,10 @@ class VoiceConfig:
     gate_margin_db: float = 6.0  # dB above the noise floor to count as voice
     max_consecutive_failures: int = 3  # failed attempts before giving up
     max_tokens: int = 200  # spoken answers: short by default
+    stt_prompt: str = "Hola, Jarvis. JARVIS es el asistente."  # sesga a Whisper
+    ollama_keep_alive: str = "30m"  # modelo residente tras cada uso
+    confirm_by_voice: bool = True  # pedir permisos hablando (ademas de la GUI)
+    confirm_timeout_s: float = 30.0  # sin respuesta => se deniega
     debug_audio_dir: str = ""  # opt-in: save each utterance WAV here (privacy!)
 
 

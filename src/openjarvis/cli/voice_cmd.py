@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 
 import click
@@ -222,30 +223,83 @@ def voice(
     )
     debug_dir = debug_audio_dir or vc.debug_audio_dir or None
 
+    from openjarvis.jarvis.confirmation import ConfirmationBroker
+    from openjarvis.jarvis.runtime import JarvisRuntime
     from openjarvis.voice.pipeline import VoicePipeline
 
-    console.print("[dim]Cargando modelos de voz (una sola vez por sesion)...[/dim]")
+    console.print(
+        "[dim]Cargando modelos (voz + Ollama) una sola vez por sesion...[/dim]"
+    )
     t0 = time.monotonic()
     try:
-        pipeline = VoicePipeline(
-            engine=engine,
-            model_name=model_name,
+        broker = ConfirmationBroker(timeout_s=vc.confirm_timeout_s)
+        runtime = JarvisRuntime(
             config=config,
-            agent_name=agent_name or "",
+            engine=engine,
+            model=model_name,
+            broker=broker,
+            agent_name=agent_name or "operative",
+        )
+    except Exception as exc:
+        console.print(f"[red]No se pudo iniciar el cerebro de JARVIS:[/red] {exc}")
+        sys.exit(1)
+
+    # Ollama se precarga EN PARALELO con la carga de Whisper/Kokoro (CPU).
+    preload_s: dict[str, float | str] = {}
+
+    def _preload() -> None:
+        try:
+            preload_s["s"] = runtime.preload()
+        except Exception as exc:  # noqa: BLE001
+            preload_s["err"] = f"{type(exc).__name__}: {exc}"
+
+    th = threading.Thread(target=_preload, daemon=True)
+    th.start()
+
+    holder: dict[str, VoicePipeline] = {}
+
+    def agent_fn(text: str, _temperature: float, max_tokens: int) -> str:
+        pipe = holder["p"]
+        channels = [pipe.confirm_channel] if vc.confirm_by_voice else None
+        reply = runtime.respond(
+            text,
+            source="voice",
+            voice=True,
+            max_tokens=max_tokens,
+            confirm_channels=channels,
+        )
+        if reply.error:
+            raise RuntimeError(reply.error)
+        return reply.text
+
+    try:
+        pipeline = VoicePipeline(
+            config=config,
+            agent_fn=agent_fn,
             stt_model_size=stt_model_size,
             tts_lang_code=tts_lang_code,
             tts_voice_id=tts_voice_id,
             vad_config=vad_config,
             debug_audio_dir=debug_dir,
+            stt_prompt=vc.stt_prompt,
+            style_hint="",
         )
     except Exception as exc:
         console.print(f"[red]No se pudo inicializar el pipeline de voz:[/red] {exc}")
         sys.exit(1)
+    holder["p"] = pipeline
+    th.join(timeout=120)
     warm_s = time.monotonic() - t0
     wu = pipeline.warm_up_seconds
+    ollama_txt = (
+        f"Ollama={preload_s['s']:.1f}s"
+        if "s" in preload_s
+        else f"Ollama NO precargado ({preload_s.get('err', 'sin respuesta')})"
+    )
     console.print(
-        f"[dim]Modelos listos en {warm_s:.2f}s "
-        f"(STT={wu.get('stt_load_s', 0):.2f}s, TTS={wu.get('tts_load_s', 0):.2f}s). "
+        f"[dim]Listo en {warm_s:.2f}s "
+        f"(STT={wu.get('stt_load_s', 0):.2f}s, TTS={wu.get('tts_load_s', 0):.2f}s, "
+        f"{ollama_txt}, en paralelo). "
         f"Esto no se vuelve a pagar en los turnos siguientes de esta sesion.[/dim]"
     )
     wait_txt = (

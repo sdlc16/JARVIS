@@ -440,6 +440,18 @@ def test_symlink_escape_is_blocked(call, home):
     err(call("POST", "/v1/files/read", {"path": str(link)}), 403, "path_not_allowed")
 
 
+def test_list_returns_exact_counts_not_left_to_the_model(call, home):
+    d = home / "Downloads"
+    for i in range(7):
+        (d / f"f{i}.txt").write_text("x")
+    (d / "carpeta").mkdir()
+    r = data(call("POST", "/v1/files/list", {"path": str(d), "limit": 3}))
+    assert r["total_entries"] == 8 and r["total_files"] == 7 and r["total_folders"] == 1
+    assert r["returned"] == 3 and r["truncated"] is True
+    r = data(call("POST", "/v1/files/list", {"path": str(d)}))
+    assert r["returned"] == 8 and r["truncated"] is False
+
+
 def test_list_and_search(call, home):
     (home / "Documents" / "informe_final.txt").write_text("x")
     (home / "Documents" / "otro.md").write_text("x")

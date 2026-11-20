@@ -72,8 +72,9 @@ class FakeSTT:
     def __init__(self, *texts, boom=False):
         self.texts, self.calls, self.boom = list(texts), 0, boom
 
-    def transcribe(self, wav, format="wav", language=None):
+    def transcribe(self, wav, format="wav", language=None, initial_prompt=None):
         self.calls += 1
+        self.prompts = [*getattr(self, "prompts", []), initial_prompt]
         if self.boom:
             raise RuntimeError("ctranslate2 exploto")
         text = self.texts[min(self.calls - 1, len(self.texts) - 1)]
@@ -420,3 +421,84 @@ def test_debug_audio_is_opt_in_and_pruned(tmp_path):
 
     q = make(Script(FakeMic(utterance())))
     assert q._debug_audio_dir is None  # por defecto NO se guarda ningun audio
+
+
+# --- confirmacion de acciones por voz --------------------------------------
+
+
+def _confirm_pipeline(stt, tts=None, mic=None):
+    tts = tts or FakeTTS()
+    return make(mic or FakeMic(utterance()), stt=stt, tts=tts), tts
+
+
+def test_voice_confirmation_yes_asks_out_loud_and_listens():
+    stt = FakeSTT("Sí, hazlo")
+    p, tts = _confirm_pipeline(stt)
+    assert p.confirm_by_voice("Escribir «hola» en la ventana «Bloc»") is True
+    assert "Sí. No. Hazlo" in stt.prompts[0]  # vocabulario de si/no, no el general
+    assert "permiso" in tts.texts[0] and "Escribir «hola»" in tts.texts[0]
+    assert "sí o no" in tts.texts[0].lower()
+
+
+def test_voice_confirmation_no_denies():
+    p, _ = _confirm_pipeline(FakeSTT("No, cancela eso"))
+    assert p.confirm_by_voice("Cerrar la ventana") is False
+
+
+def test_ambiguous_answer_is_asked_again_then_gives_up_without_approving():
+    p, tts = _confirm_pipeline(FakeSTT("mmm déjame pensar", "quizás"))
+    assert p.confirm_by_voice("Hacer clic") is None
+    assert len(tts.texts) == 2 and "No te he entendido" in tts.texts[1]
+
+
+def test_second_attempt_can_resolve():
+    p, tts = _confirm_pipeline(FakeSTT("eh", "vale"))
+    assert p.confirm_by_voice("Hacer clic") is True and len(tts.texts) == 2
+
+
+def test_silence_during_confirmation_does_not_approve():
+    p, _ = _confirm_pipeline(FakeSTT("sí"), mic=FakeMic(build_stream([silence(12.0)])))
+    assert p.confirm_by_voice("Hacer clic") is None  # nadie habló => no se aprueba
+
+
+def test_microphone_failure_during_confirmation_is_not_an_approval():
+    p, _ = _confirm_pipeline(
+        FakeSTT("sí"), mic=FakeMic(build_stream([silence(1)]), fail="enter")
+    )
+    assert p.confirm_by_voice("Hacer clic") is None
+
+
+def test_voice_channel_resolves_the_broker_and_is_credited():
+    from openjarvis.jarvis.confirmation import ConfirmationBroker
+
+    p, _ = _confirm_pipeline(FakeSTT("sí"))
+    broker = ConfirmationBroker(timeout_s=5, audit_path=None)
+    ok = broker.request(
+        "windows_type", {"text": "hola", "title": "Bloc"}, channels=[p.confirm_channel]
+    )
+    assert ok is True and broker.recent()[0]["decided_by"] == "voz"
+
+
+def test_whisper_receives_the_vocabulary_prompt():
+    seen = {}
+
+    class Spy(FakeSTT):
+        def transcribe(self, wav, format="wav", language=None, initial_prompt=None):
+            seen["prompt"] = initial_prompt
+            return super().transcribe(wav, format, language)
+
+    p = make(FakeMic(utterance()), stt=Spy("hola"), stt_prompt="Hola, Jarvis.")
+    p.run_turn()
+    assert seen["prompt"] == "Hola, Jarvis."
+
+
+def test_style_hint_can_be_disabled_when_the_runtime_owns_the_prompt():
+    got = {}
+
+    def agent(text, t, m):
+        got["text"] = text
+        return "ok"
+
+    p = make(FakeMic(utterance()), agent=agent, style_hint="")
+    p.run_turn()
+    assert got["text"] == "hola jarvis como estas"  # sin prefijo: lo pone el runtime

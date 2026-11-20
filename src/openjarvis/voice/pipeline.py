@@ -18,9 +18,10 @@ import re
 import time
 import wave
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from openjarvis.core.events import EventBus
 from openjarvis.core.types import Message, Role
@@ -238,6 +239,8 @@ class VoicePipeline:
         play_stream: Callable[..., None] | None = None,
         play_wav: Callable[[bytes], None] | None = None,
         agent_fn: Callable[[str, float, int], str] | None = None,
+        stt_prompt: str = "",
+        style_hint: str | None = None,
         run_id: str | None = None,
         log_path: Path | None = None,
         log_turns: bool = True,
@@ -254,6 +257,8 @@ class VoicePipeline:
         self._debug_audio_dir = Path(debug_audio_dir) if debug_audio_dir else None
 
         self._agent_fn = agent_fn
+        self._stt_prompt = stt_prompt
+        self._style_hint = VOICE_STYLE_HINT if style_hint is None else style_hint
         self._engine = engine
         self._capability_policy = None
         if agent_fn is None:
@@ -333,7 +338,9 @@ class VoicePipeline:
     # ------------------------------------------------------------------
 
     def listen_once(
-        self, on_ready: Callable[[], None] | None = None
+        self,
+        on_ready: Callable[[], None] | None = None,
+        vad: VoiceActivityDetector | None = None,
     ) -> tuple[bytes, VadStats, float, bool]:
         """Espera y captura UN turno de habla real del microfono.
 
@@ -348,14 +355,70 @@ class VoicePipeline:
             dead = getattr(mic, "signal_dead_at_start", False)
             if on_ready is not None:
                 on_ready()
-            pcm, stats = segment_utterance(mic.frames(), self._vad)
+            pcm, stats = segment_utterance(mic.frames(), vad or self._vad)
         return pcm, stats, startup, dead
 
     def transcribe(self, pcm: bytes) -> tuple[str, str | None, float | None]:
         """PCM crudo -> (texto, idioma, probabilidad_de_idioma)."""
         wav_bytes = audio_io.pcm_to_wav_bytes(pcm)
-        result = self._stt.transcribe(wav_bytes, format="wav", language="es")
+        kwargs = {"initial_prompt": self._stt_prompt} if self._stt_prompt else {}
+        result = self._stt.transcribe(wav_bytes, format="wav", language="es", **kwargs)
         return result.text, result.language, result.confidence
+
+    # ------------------------------------------------------------------
+    # Confirmacion de acciones por voz
+    # ------------------------------------------------------------------
+
+    def _listen_short(self) -> str:
+        """Escucha UNA respuesta corta (si/no) y la transcribe ('' si no hubo)."""
+        cfg = replace(
+            self._vad.config,
+            silence_timeout_ms=900,
+            no_speech_timeout_ms=9000,
+            max_utterance_ms=6000,
+        )
+        vad = VoiceActivityDetector(cfg)
+        vad.noise_floor = self._vad.noise_floor  # ya calibrado en esta sesion
+        pcm, _stats, _startup, _dead = self.listen_once(vad=vad)
+        if not pcm:
+            return ""
+        wav_bytes = audio_io.pcm_to_wav_bytes(pcm)
+        result = self._stt.transcribe(
+            wav_bytes,
+            format="wav",
+            language="es",
+            initial_prompt="Sí. No. Hazlo. Adelante. Confirmo. Cancela. Dale.",
+        )
+        return result.text or ""
+
+    def confirm_by_voice(self, description: str, attempts: int = 2) -> bool | None:
+        """Pregunta en voz alta y escucha 'si'/'no'. None si no hay respuesta clara."""
+        from openjarvis.jarvis.confirmation import parse_yes_no
+
+        for attempt in range(attempts):
+            question = (
+                f"Necesito tu permiso para: {description}. ¿Lo confirmas? Di sí o no."
+                if attempt == 0
+                else "No te he entendido. ¿Sí o no?"
+            )
+            try:
+                self.speak(question)
+                answer = parse_yes_no(self._listen_short())
+            except CaptureError:
+                return None
+            if answer is not None:
+                return answer
+        return None
+
+    @property
+    def confirm_channel(self) -> Callable[[Any], bool | None]:
+        """Canal para ConfirmationBroker: usa la voz para pedir el permiso."""
+
+        def channel(pending: Any) -> bool | None:
+            return self.confirm_by_voice(pending.description)
+
+        channel.channel_name = "voz"  # type: ignore[attr-defined]
+        return channel
 
     def ask_agent(
         self,
@@ -363,10 +426,11 @@ class VoicePipeline:
         *,
         temperature: float = 0.7,
         max_tokens: int = DEFAULT_VOICE_MAX_TOKENS,
-        style_hint: str = VOICE_STYLE_HINT,
+        style_hint: str | None = None,
     ) -> str:
         """Texto transcrito -> respuesta del agente JARVIS (reutiliza cli.ask)."""
-        augmented_text = f"{style_hint}\n\n{text}" if style_hint else text
+        hint = self._style_hint if style_hint is None else style_hint
+        augmented_text = f"{hint}\n\n{text}" if hint else text
         if self._agent_fn is not None:
             return self._agent_fn(augmented_text, temperature, max_tokens)
 

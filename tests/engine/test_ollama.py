@@ -20,6 +20,54 @@ def engine() -> OllamaEngine:
     return OllamaEngine(host="http://testhost:11434")
 
 
+class TestOllamaKeepAlive:
+    """keep_alive opcional + precarga (evita ~10 s de carga en el primer turno)."""
+
+    _OK = {
+        "message": {"role": "assistant", "content": "ok"},
+        "model": "qwen3:8b",
+        "prompt_eval_count": 1,
+        "eval_count": 1,
+    }
+
+    def test_default_payload_has_no_keep_alive(self, engine: OllamaEngine) -> None:
+        with respx.mock:
+            route = respx.post("http://testhost:11434/api/chat").mock(
+                return_value=httpx.Response(200, json=self._OK)
+            )
+            engine.generate([Message(role=Role.USER, content="Hi")], model="qwen3:8b")
+            assert b"keep_alive" not in route.calls.last.request.content
+
+    def test_keep_alive_is_sent_once_configured(self, engine: OllamaEngine) -> None:
+        engine.set_keep_alive("30m")
+        with respx.mock:
+            route = respx.post("http://testhost:11434/api/chat").mock(
+                return_value=httpx.Response(200, json=self._OK)
+            )
+            engine.generate([Message(role=Role.USER, content="Hi")], model="qwen3:8b")
+            body = json.loads(route.calls.last.request.content)
+            assert body["keep_alive"] == "30m"
+        engine.set_keep_alive(None)
+
+    def test_preload_loads_model_without_generating(self, engine: OllamaEngine) -> None:
+        with respx.mock:
+            route = respx.post("http://testhost:11434/api/generate").mock(
+                return_value=httpx.Response(200, json={"done": True})
+            )
+            seconds = engine.preload("qwen3:8b")
+            body = json.loads(route.calls.last.request.content)
+            assert body["prompt"] == "" and body["keep_alive"] == "30m"
+            assert body["model"] == "qwen3:8b" and seconds >= 0
+
+    def test_preload_reports_unreachable_ollama(self, engine: OllamaEngine) -> None:
+        with respx.mock:
+            respx.post("http://testhost:11434/api/generate").mock(
+                side_effect=httpx.ConnectError("refused")
+            )
+            with pytest.raises(EngineConnectionError):
+                engine.preload("qwen3:8b")
+
+
 class TestOllamaGenerate:
     def test_generate_returns_content(self, engine: OllamaEngine) -> None:
         with respx.mock:

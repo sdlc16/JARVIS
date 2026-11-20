@@ -45,6 +45,35 @@ class OllamaEngine(InferenceEngine):
         self._client = httpx.Client(base_url=self._host, timeout=timeout)
         # Last stream usage — captured from Ollama's final chunk
         self._last_stream_usage: Dict[str, int] = {}
+        # keep_alive opcional (p.ej. "30m"): None = comportamiento por defecto de Ollama
+        self._keep_alive: str | None = None
+
+    def set_keep_alive(self, value: str | None) -> None:
+        """Mantiene el modelo cargado ese tiempo tras cada uso (None = defecto)."""
+        self._keep_alive = value or None
+
+    def preload(self, model: str, keep_alive: str | None = None) -> float:
+        """Carga el modelo en memoria SIN generar texto. Devuelve segundos.
+
+        Evita pagar la carga (~10 s medidos con qwen3:8b) en el primer turno.
+        """
+        import time
+
+        t0 = time.monotonic()
+        payload: Dict[str, Any] = {
+            "model": model,
+            "prompt": "",
+            "stream": False,
+            "keep_alive": keep_alive or self._keep_alive or "30m",
+        }
+        try:
+            resp = self._client.post("/api/generate", json=payload, timeout=120.0)
+            resp.raise_for_status()
+        except httpx.TransportError as exc:
+            raise EngineConnectionError(
+                f"Ollama not reachable at {self._host}"
+            ) from exc
+        return time.monotonic() - t0
 
     def generate(
         self,
@@ -87,6 +116,8 @@ class OllamaEngine(InferenceEngine):
         tools = kwargs.get("tools")
         if tools:
             payload["tools"] = tools
+        if self._keep_alive:
+            payload["keep_alive"] = self._keep_alive
 
         # Apply structured output / JSON mode
         response_format = kwargs.get("response_format")

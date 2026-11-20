@@ -344,7 +344,10 @@ def files_list(ctx: Ctx, p: Params) -> dict:
         raise BridgeError("not_a_directory", f"No es una carpeta: {d}", 400)
     limit = min(_int(p, "limit", 200) or 200, 1000)
     entries = []
-    for child in sorted(d.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower())):
+    children = sorted(d.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower()))
+    total = len(children)
+    n_dirs = sum(1 for c in children if c.is_dir())
+    for child in children:
         try:
             st = child.stat()
         except OSError:
@@ -361,7 +364,17 @@ def files_list(ctx: Ctx, p: Params) -> dict:
         )
         if len(entries) >= limit:
             break
-    return {"path": str(d), "entries": entries, "truncated": len(entries) >= limit}
+    return {
+        # Recuentos calculados aqui: los modelos cuentan mal las listas largas
+        # (medido: 65/54/53 para la misma carpeta).
+        "path": str(d),
+        "total_entries": total,
+        "total_folders": n_dirs,
+        "total_files": total - n_dirs,
+        "returned": len(entries),
+        "entries": entries,
+        "truncated": total > len(entries),
+    }
 
 
 def files_read(ctx: Ctx, p: Params) -> dict:

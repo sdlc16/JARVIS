@@ -30,11 +30,13 @@ LINT_PATHS = [
     "src/openjarvis/engine/degradation.py",
     "src/openjarvis/tasks",
     "src/openjarvis/windows",
+    "src/openjarvis/jarvis",
     "src/openjarvis/tools/windows_tools.py",
     "windows_bridge/jarvis_bridge",
     "windows_bridge/selftest.py",
     "tests/voice",
     "tests/bridge",
+    "tests/jarvis",
 ]
 
 SUITES: dict[str, list[str]] = {
@@ -44,6 +46,7 @@ SUITES: dict[str, list[str]] = {
     "voice": [
         "tests/voice",
         "tests/bridge",
+        "tests/jarvis",
         "tests/tools/test_windows_tools.py",
         "tests/speech",
         "tests/learning/test_device_selection.py",
@@ -52,6 +55,7 @@ SUITES: dict[str, list[str]] = {
     "full": [
         "tests/voice",
         "tests/bridge",
+        "tests/jarvis",
         "tests/tools/test_windows_tools.py",
         "tests/sessions",
         "tests/speech",

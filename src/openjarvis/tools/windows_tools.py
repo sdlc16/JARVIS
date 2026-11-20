@@ -46,6 +46,15 @@ class _WindowsTool(BaseTool):
             self._client = BridgeClient()
         return self._client
 
+    def _open_windows_hint(self) -> str:
+        """Ventanas reales (solo lectura) para que el modelo corrija un hwnd/titulo."""
+        try:
+            wins = self.client().call("windows.list").get("windows", [])
+        except Exception:  # noqa: BLE001 -- es solo una ayuda
+            return ""
+        rows = "; ".join(f"hwnd={w['hwnd']} «{w['title']}»" for w in wins[:12])
+        return f" Ventanas abiertas ahora: {rows}. No inventes hwnd: usa uno de estos."
+
     def _run(self, route: str, **params: Any) -> ToolResult:
         name = self.tool_id
         try:
@@ -57,9 +66,12 @@ class _WindowsTool(BaseTool):
                 success=False,
             )
         except BridgeActionError as exc:
+            content = f"Windows rechazo la accion ({exc.code}): {exc.message}"
+            if exc.code in ("window_not_found", "window_ambiguous"):
+                content += self._open_windows_hint()
             return ToolResult(
                 tool_name=name,
-                content=f"Windows rechazo la accion ({exc.code}): {exc.message}",
+                content=content,
                 success=False,
                 metadata={"code": exc.code, "status": exc.status},
             )
@@ -212,8 +224,17 @@ class WindowsTypeTool(_WindowsTool):
             return ToolResult(self.tool_id, err, success=False)
         if not (params.get("hwnd") or params.get("title")):
             return ToolResult(self.tool_id, "Indica hwnd o title.", success=False)
-        route = "input.paste" if params.get("method") == "paste" else "input.type"
-        return self._run(route, text=params["text"], **_target(params))
+        if params.get("method") == "paste":
+            return self._run("input.paste", text=params["text"], **_target(params))
+        result = self._run("input.type", text=params["text"], **_target(params))
+        data = (result.metadata or {}).get("data")
+        if isinstance(data, dict) and data.get("verified") is False:
+            # Apps con autocorreccion/teclas perdidas (Notepad de Win11): el mismo
+            # texto, en la misma ventana ya aprobada, por portapapeles.
+            retry = self._run("input.paste", text=params["text"], **_target(params))
+            retry.metadata = {**(retry.metadata or {}), "retried_with": "paste"}
+            return retry
+        return result
 
 
 @ToolRegistry.register("windows_hotkey")

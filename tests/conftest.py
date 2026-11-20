@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+# El puente de Windows (proceso nativo) vive fuera de src/: su logica pura se
+# prueba desde WSL con un doble de Win32 (tests/bridge, tests/tools, tests/jarvis).
+_BRIDGE_DIR = str(Path(__file__).resolve().parents[1] / "windows_bridge")
+if _BRIDGE_DIR not in sys.path:
+    sys.path.insert(0, _BRIDGE_DIR)
 
 from openjarvis.core.config import GpuInfo, HardwareInfo
 from openjarvis.core.events import EventBus, reset_event_bus
