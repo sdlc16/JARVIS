@@ -97,6 +97,10 @@ CLAUDE.md
 
 # NFS lock artifacts
 .nfs*
+
+# Windows bridge -- token local y logs de ejecucion (nunca secretos en git)
+windows_bridge/.t1_5_token
+windows_bridge/*.log
 **/.nfs*
 
 # Research output

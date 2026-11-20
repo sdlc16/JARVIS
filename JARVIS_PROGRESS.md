@@ -59,11 +59,37 @@ Con el fix aplicado, la validación real completa pasó limpia:
 
 ### Pendiente / no hecho esta sesión
 
-- **Commit/push:** sigue pendiente de que el usuario dé su nombre/email para Git (no se ha inventado ninguno, tal como se pidió). Nada perdido — mismos 2035+ archivos en stage.
-- **T1.5** (puente nativo de Windows): no empezado — es la siguiente pieza grande no construida todavía.
 - Actualización v0.1.1→v1.0.4 de OpenJarvis: **no aplicada deliberadamente** — un salto de versión mayor podría traer cambios incompatibles con nuestras personalizaciones de T1.4; requiere revisión antes de aceptarla.
 - `jarvis memory search` con score siempre en 0.0000 — posible defecto menor, no investigado.
 - Node.js no instalado (solo lo necesitan ClaudeCodeAgent y el puente de WhatsApp, fuera de alcance ahora).
+
+## Sesión 2026-11-20 — primer commit local + T1.5 (prueba mínima del puente de Windows)
+
+**Primer commit local realizado.** Identidad Git confirmada por el usuario (`Santiago <santiagodelacruzc16@gmail.com>`) y configurada **solo local** (`git config --local`, nunca `--global`, verificado). Revisados los 2037 archivos candidatos (stage previo + los 5 pendientes de la sesión anterior: `JARVIS_PROGRESS.md`, `src/openjarvis/engine/ollama.py`, `tests/engine/test_ollama.py`, `configs/openjarvis/examples/jarvis-rtx4060.toml`, `scripts/start-jarvis.ps1`) — sin credenciales, secretos, bases de datos, modelos ni archivos personales (ver detalle del escaneo en el chat de esa sesión). Commit `2340c80` en `master`, working tree limpio, sin remoto configurado — **no se hizo push**.
+
+**Metodología de autonomía actualizada** (ver mensaje del usuario): a partir de aquí se trabaja por fases completas sin pedir autorización para pasos ordinarios (comandos, instalación, dependencias gratuitas, correcciones), con commits locales permitidos tras revisión, nunca push sin autorización explícita, y sin inferencia cloud bajo ninguna circunstancia.
+
+### T1.5 — Prueba mínima del puente nativo de Windows (COMPLETADA)
+
+Alcance deliberadamente limitado (no es el puente completo de Fase 3): una sola acción trivial — abrir el Bloc de notas — para validar el canal WSL2 ↔ proceso Windows nativo de extremo a extremo.
+
+**Hallazgo de red:** este WSL2 usa **NAT, no mirrored networking** (`ip route` → `172.29.48.0/20` vía gateway `172.29.48.1`; sin esto no habría sido mirrored, donde `localhost` sería compartido). Por tanto `localhost` desde WSL2 **no** llega al host Windows — el bridge debe escuchar en la IP del adaptador `vEthernet (WSL (Hyper-V firewall))` (`172.29.48.1`), nunca en `0.0.0.0` ni en la red real del usuario ("CASA", categoría *Public*). Documentado para que T3.1 (diseño de la API completa) lo tenga en cuenta.
+
+**Hallazgo de comportamiento real de Windows 11:** el Bloc de notas moderno es una app empaquetada (MSIX) — el PID que devuelve `subprocess.Popen(["notepad.exe"])` es un proceso intermediario que normalmente **no** es el propietario final de la ventana (y una segunda apertura puede añadirse como pestaña a una ventana ya existente en vez de crear una nueva). La verificación por PID exacto fallaba por esto (falso negativo, no un fallo del canal) — corregido verificando "existe una ventana visible nueva cuyo proceso propietario es `notepad.exe`" vía `EnumWindows` + `QueryFullProcessImageNameW` (ctypes, sin dependencias nuevas), comparando el conjunto de ventanas antes/después de la petición.
+
+Implementación: [`windows_bridge/bridge_server.py`](windows_bridge/bridge_server.py) — proceso Python nativo de Windows (fuera de WSL2), standalone a propósito (sin `ToolRegistry` todavía — esa integración es alcance de T3.1/T3.2, no de esta prueba mínima). Escucha solo en `172.29.48.1:47811`, token Bearer generado al arrancar (texto plano, fuera del repo, en `windows_bridge/.t1_5_token` — gitignored; el cifrado DPAPI es alcance explícito de T3.2, no de T1.5), origen verificado contra la subred WSL real como defensa adicional, log de cada petición en `windows_bridge/t1_5_bridge.log` (gitignored), y limpieza automática (cierra la ventana que abrió tras verificarla).
+
+**Resultado: los 4 criterios de aceptación, verificados 3 rondas consecutivas sin fallo** (ver `results/t1_5_bridge_test.sh`):
+
+| Ronda | Sin token | Token inválido | Token válido + acción real + confirmación |
+|---|---|---|---|
+| 1 | HTTP 401 `missing_token`, no ejecuta | HTTP 403 `invalid_token`, no ejecuta | HTTP 200, `window_verified: true`, hwnd nuevo `1508944` |
+| 2 | HTTP 401 | HTTP 403 | HTTP 200, `window_verified: true`, hwnd nuevo `1574444` |
+| 3 | HTTP 401 | HTTP 403 | HTTP 200, `window_verified: true`, hwnd nuevo `1967806` |
+
+Verificación real (no simulada): la ventana se confirma vía la API Win32 real (`EnumWindows`/`GetWindowThreadProcessId`), no un mock; cada hwnd nuevo es distinto entre rondas, confirmando una ejecución real por petición. **T1.5 queda COMPLETADA.** Esto desbloquea T3.1 (diseño de la API completa del puente, Fase 3) cuando corresponda por orden de roadmap.
+
+**Nota menor no bloqueante:** quedaron 2-3 ventanas vacías del Bloc de notas abiertas de una ronda de prueba previa al fix (antes de que la limpieza automática existiera) — sin contenido, sin datos, cerrables manualmente cuando convenga.
 
 ## Sesión de instalación en PC real (2026-11-19) — checkpoint antes de reiniciar Windows
 
