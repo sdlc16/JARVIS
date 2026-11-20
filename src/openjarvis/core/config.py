@@ -1427,6 +1427,11 @@ class VoiceConfig:
     wake_patience: int = 2  # bloques de 80 ms seguidos sobre el umbral
     wake_word: str = "jarvis"  # palabra que busca el modo stt en la transcripcion
     wake_followup_s: float = 8.0  # tras responder, espera esto sin pedir "Hey Jarvis"
+    barge_in: bool = False  # hablar encima de JARVIS lo interrumpe (validar con altavoces reales)
+    barge_in_ignore_ms: int = 400  # arranque de la reproduccion: se mide el eco
+    barge_in_sustain_ms: int = 300  # voz continua necesaria para interrumpir
+    barge_in_margin_db: float = 12.0  # sobre el ruido ambiente
+    barge_in_echo_margin_db: float = 6.0  # sobre el eco medido de los altavoces
     debug_audio_dir: str = ""  # opt-in: save each utterance WAV here (privacy!)
 
 

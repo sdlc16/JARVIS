@@ -13,8 +13,10 @@ reintentar en vez de morir.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
+import threading
 import time
 import wave
 from collections.abc import Callable
@@ -241,6 +243,7 @@ class VoicePipeline:
         agent_fn: Callable[[str, float, int], str] | None = None,
         stt_prompt: str = "",
         style_hint: str | None = None,
+        barge_in: Any = None,
         run_id: str | None = None,
         log_path: Path | None = None,
         log_turns: bool = True,
@@ -302,6 +305,8 @@ class VoicePipeline:
         self._play_wav = play_wav or audio_io.play_wav_bytes
 
         self._vad = VoiceActivityDetector(vad_config)
+        self._barge_in_cfg = barge_in
+        self._pending_handoff: Any = None
 
         # Carga los modelos AHORA, no en el primer turno: asi el coste de
         # arranque (descarga/carga en memoria, ver JARVIS_PROGRESS.md) no
@@ -350,6 +355,18 @@ class VoicePipeline:
         ~0.4 s previos son ceros y cualquier palabra dicha entonces se
         pierde). Lanza `CaptureError` si la captura falla.
         """
+        handoff, self._pending_handoff = self._pending_handoff, None
+        if handoff is not None:
+            # Barge-in: continua con el MISMO micro y el audio previo al disparo
+            # (no se pierde ni una palabra del usuario).
+            try:
+                if on_ready is not None:
+                    on_ready()
+                frames = itertools.chain(handoff.prefix, handoff.mic.frames())
+                pcm, stats = segment_utterance(frames, vad or self._vad)
+            finally:
+                handoff.close()
+            return pcm, stats, 0.0, False
         with self._capture() as mic:
             startup = getattr(mic, "startup_seconds", 0.0)
             dead = getattr(mic, "signal_dead_at_start", False)
@@ -357,6 +374,12 @@ class VoicePipeline:
                 on_ready()
             pcm, stats = segment_utterance(mic.frames(), vad or self._vad)
         return pcm, stats, startup, dead
+
+    def close(self) -> None:
+        """Libera el micro que quede retenido por una interrupcion sin consumir."""
+        handoff, self._pending_handoff = self._pending_handoff, None
+        if handoff is not None:
+            handoff.close()
 
     def wait_for_wake(
         self,
@@ -533,7 +556,9 @@ class VoicePipeline:
         )
         return result.content
 
-    def speak(self, text: str) -> tuple[str, float, float, dict]:
+    def speak(
+        self, text: str, *, interruptible: bool = False
+    ) -> tuple[str, float, float, dict]:
         """Respuesta -> TTS real -> reproduccion por los altavoces reales.
 
         Devuelve (modo, segundos_hasta_primer_audio, segundos_totales, detalle).
@@ -558,12 +583,15 @@ class VoicePipeline:
                 "gap_seconds": 0.0,
             }
             state = {"last": t0, "play_end": None}
+            holder_mon: list = []  # el monitor de barge-in (si lo hay)
 
             def _timed_chunks():
                 for chunk in stream_fn(text, **tts_kwargs):
                     now = time.monotonic()
                     dur = len(chunk) / 2 / sample_rate
                     if detail["first_chunk_s"] is None:
+                        if holder_mon:
+                            holder_mon[0].playback_started()
                         detail["first_chunk_s"] = now - t0
                         state["play_end"] = now + dur
                     else:
@@ -578,7 +606,45 @@ class VoicePipeline:
                     detail["chunks"] += 1
                     yield chunk
 
-            self._play_stream(_timed_chunks(), sample_rate=sample_rate)
+            monitor, cancel = None, None
+            if interruptible and self._barge_in_cfg is not None:
+                from openjarvis.voice.bargein import BargeInMonitor
+
+                cancel = threading.Event()
+                monitor = BargeInMonitor(
+                    self._capture, self._vad.noise_floor.floor_db, self._barge_in_cfg
+                )
+                try:
+                    monitor.start()
+                    holder_mon.append(monitor)
+                    threading.Thread(
+                        target=lambda: (monitor.triggered.wait(), cancel.set()),
+                        daemon=True,
+                    ).start()
+                except Exception as exc:  # noqa: BLE001 - sin micro: se habla igual
+                    logger.warning("barge-in no disponible: %s", exc)
+                    monitor, cancel = None, None
+            try:
+                if cancel is not None:
+                    self._play_stream(
+                        _timed_chunks(), sample_rate=sample_rate, cancel=cancel
+                    )
+                else:
+                    self._play_stream(_timed_chunks(), sample_rate=sample_rate)
+            finally:
+                if monitor is not None:
+                    detail["barge_in"] = {
+                        "triggered": monitor.triggered.is_set(),
+                        "echo_dbfs": round(monitor.echo_db, 1),
+                        "trigger_dbfs": monitor.trigger_db,
+                        "trigger_at_ms": monitor.trigger_at_ms,
+                        "error": str(monitor.error) if monitor.error else None,
+                        "stats": dict(monitor.stats),
+                    }
+                    if monitor.triggered.is_set():
+                        cancel.set()
+                    self._pending_handoff = monitor.stop()
+                    monitor.triggered.set()  # libera el hilo auxiliar
             total_s = time.monotonic() - t0
             first_audio_s = detail["first_chunk_s"] or total_s
             return "stream", first_audio_s, total_s, detail
@@ -712,7 +778,9 @@ class VoicePipeline:
 
         # 4) TTS + reproduccion --------------------------------------------
         try:
-            mode, first_audio_s, total_s, detail = self.speak(res.response_text)
+            mode, first_audio_s, total_s, detail = self.speak(
+                res.response_text, interruptible=True
+            )
         except Exception as exc:  # noqa: BLE001 -- incluye PlaybackError
             return done(
                 TurnOutcome.TTS_ERROR,

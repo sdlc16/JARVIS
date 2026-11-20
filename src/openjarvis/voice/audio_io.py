@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import select
 import subprocess
+import threading
 import time
 import wave
 from collections.abc import Iterator
@@ -267,11 +268,27 @@ def play_wav_bytes(wav_bytes: bytes, device: str = "RDPSink") -> None:
         raise PlaybackError(f"paplay fallo (codigo {exc.returncode}): {err}") from exc
 
 
+def _stop_player(proc: subprocess.Popen) -> None:
+    """Para paplay con SIGTERM (cierra su flujo limpiamente en PulseAudio).
+
+    Medido: un SIGKILL a mitad de flujo dejo sin respuesta al servidor de audio
+    de WSLg en la prueba siguiente; SIGTERM primero y SIGKILL solo si no sale.
+    """
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
 def play_pcm_stream(
     chunks: Iterator[bytes],
     sample_rate: int,
     device: str = "RDPSink",
-) -> None:
+    cancel: threading.Event | None = None,
+) -> bool:
     """Reproduce PCM16LE mono crudo segun va llegando (streaming real).
 
     A diferencia de `play_wav_bytes` (que necesita el audio completo ya
@@ -280,6 +297,9 @@ def play_pcm_stream(
     sintetizando la frase siguiente), `paplay` ya esta reproduciendo el
     anterior -- la sintesis del resto de la respuesta se solapa con la
     reproduccion en vez de esperar a que todo termine (T2.4b).
+
+    Si `cancel` se activa (barge-in) corta el audio al instante y devuelve
+    True; en reproduccion normal devuelve False.
 
     Lanza `PlaybackError` si el reproductor no existe o muere a mitad.
     """
@@ -300,20 +320,42 @@ def play_pcm_stream(
         raise PlaybackError("paplay no esta instalado") from exc
     assert proc.stdin is not None
     broken = False
+    cancelled = False
+    done = threading.Event()
+    if cancel is not None:
+
+        def _watch() -> None:
+            # corta paplay aunque el generador este bloqueado sintetizando
+            while not done.is_set():
+                if cancel.wait(0.03):
+                    _stop_player(proc)
+                    return
+
+        threading.Thread(target=_watch, daemon=True).start()
     try:
         for chunk in chunks:
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                break
             try:
                 proc.stdin.write(chunk)
                 proc.stdin.flush()
             except (BrokenPipeError, OSError):
                 broken = True
                 break
+        if cancel is not None and cancel.is_set():
+            cancelled = True
+        if cancelled:
+            _stop_player(proc)  # corta lo ya encolado en paplay
     finally:
+        done.set()
         try:
             proc.stdin.close()
         except (BrokenPipeError, OSError):
-            broken = True
+            broken = broken or not (cancel is not None and cancel.is_set())
         proc.wait()
+    if cancelled:
+        return True
     if broken or proc.returncode not in (0, None):
         err = b""
         if proc.stderr is not None:
@@ -323,3 +365,4 @@ def play_pcm_stream(
             f"paplay termino con error (codigo {proc.returncode})"
             + (f": {text}" if text else "")
         )
+    return False

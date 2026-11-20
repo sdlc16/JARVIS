@@ -281,6 +281,17 @@ def voice(
             raise RuntimeError(reply.error)
         return reply.text
 
+    barge_cfg = None
+    if vc.barge_in:
+        from openjarvis.voice.bargein import BargeInConfig
+
+        barge_cfg = BargeInConfig(
+            ignore_ms=vc.barge_in_ignore_ms,
+            sustain_ms=vc.barge_in_sustain_ms,
+            margin_db=vc.barge_in_margin_db,
+            echo_margin_db=vc.barge_in_echo_margin_db,
+        )
+
     try:
         pipeline = VoicePipeline(
             config=config,
@@ -292,6 +303,7 @@ def voice(
             debug_audio_dir=debug_dir,
             stt_prompt=vc.stt_prompt,
             style_hint="",
+            barge_in=barge_cfg,
         )
     except Exception as exc:
         console.print(f"[red]No se pudo inicializar el pipeline de voz:[/red] {exc}")
@@ -376,6 +388,7 @@ def voice(
             f"\n[dim]{ws.wakes} activacion(es), {ws.turns_ok} turno(s) completado(s); "
             f"fin: {ws.stopped_reason}.[/dim]"
         )
+        pipeline.close()
         return
 
     summary = run_session(
@@ -388,6 +401,7 @@ def voice(
         on_result=lambda r: _print_result(console, r),
     )
 
+    pipeline.close()
     fails = ", ".join(f"{k}={v}" for k, v in summary.failures.items()) or "ninguno"
     console.print(
         f"\n[dim]sesion {summary.run_id}: {summary.turns_ok} turno(s) completado(s) "
