@@ -169,3 +169,26 @@ def test_natural_questions_do_not_return_noise(kb):
     kb.remember("Mi gato se llama Miso")
     hits = [h for h in kb.search("¿Cómo se llama mi gato?") if h.score > 0]
     assert [h.kind for h in hits] == ["fact"]  # sin documentos irrelevantes
+
+
+def test_default_roots_ignore_windows_profiles_without_permission(
+    monkeypatch, tmp_path
+):
+    """Fallo real: /mnt/c/Users/Administrador daba PermissionError y tumbaba `jarvis gui`."""
+    from pathlib import Path
+
+    real_is_dir = Path.is_dir
+
+    def is_dir(self):
+        if "Administrador" in str(self):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    assert default_roots(None) is not None  # no lanza
+    from openjarvis.cli import gui_cmd
+
+    monkeypatch.setattr(
+        Path, "iterdir", lambda self: iter([Path("/mnt/c/Users/Administrador")])
+    )
+    assert all("bridge.jsonl" in str(p) for p in gui_cmd._bridge_log_candidates())

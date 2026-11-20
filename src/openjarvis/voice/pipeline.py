@@ -306,6 +306,9 @@ class VoicePipeline:
 
         self._vad = VoiceActivityDetector(vad_config)
         self._barge_in_cfg = barge_in
+        # Observador de etapas (GUI): "listening" | "transcribing" | "thinking" |
+        # "speaking". Un fallo del observador nunca afecta al turno.
+        self.on_stage: Callable[[str], None] | None = None
         self._pending_handoff: Any = None
 
         # Carga los modelos AHORA, no en el primer turno: asi el coste de
@@ -341,6 +344,13 @@ class VoicePipeline:
     # ------------------------------------------------------------------
     # Etapas
     # ------------------------------------------------------------------
+
+    def _stage(self, name: str) -> None:
+        if self.on_stage is not None:
+            try:
+                self.on_stage(name)
+            except Exception:  # noqa: BLE001
+                logger.debug("on_stage fallo", exc_info=True)
 
     def listen_once(
         self,
@@ -691,6 +701,7 @@ class VoicePipeline:
             return res
 
         # 1) captura + VAD -------------------------------------------------
+        self._stage("listening")
         try:
             turn_vad = None
             if no_speech_timeout_ms is not None:
@@ -727,6 +738,7 @@ class VoicePipeline:
         self._save_debug_audio(pcm)
 
         # 2) STT -----------------------------------------------------------
+        self._stage("transcribing")
         t0 = time.monotonic()
         try:
             text, language, lang_prob = self.transcribe(pcm)
@@ -755,6 +767,7 @@ class VoicePipeline:
         res.hint = pause_hint(stats, self._vad.config.silence_timeout_ms)
 
         # 3) agente (Ollama) -----------------------------------------------
+        self._stage("thinking")
         t0 = time.monotonic()
         try:
             response = self.ask_agent(
@@ -777,6 +790,7 @@ class VoicePipeline:
             )
 
         # 4) TTS + reproduccion --------------------------------------------
+        self._stage("speaking")
         try:
             mode, first_audio_s, total_s, detail = self.speak(
                 res.response_text, interruptible=True

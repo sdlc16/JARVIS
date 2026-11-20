@@ -37,6 +37,7 @@ from openjarvis.cli.scan_cmd import scan
 from openjarvis.cli.scheduler_cmd import scheduler
 from openjarvis.cli.self_update_cmd import self_update
 from openjarvis.cli.docs_cmd import docs
+from openjarvis.cli.gui_cmd import gui
 from openjarvis.cli.selftest_cmd import selftest
 from openjarvis.cli.serve import serve
 from openjarvis.cli.skill_cmd import skill
@@ -107,6 +108,7 @@ cli.add_command(status, "status")
 cli.add_command(vault, "vault")
 cli.add_command(voice, "voice")
 cli.add_command(docs, "docs")
+cli.add_command(gui, "gui")
 cli.add_command(add, "add")
 cli.add_command(operators, "operators")
 cli.add_command(eval_group, "eval")

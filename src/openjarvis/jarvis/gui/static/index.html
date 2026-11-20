@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS</title>
+<style>
+:root{--bg:#f5f6f8;--panel:#fff;--ink:#16202a;--mut:#5d6b78;--line:#dfe3e8;--acc:#0b6bcb;--acc-ink:#fff;
+--ok:#16794a;--warn:#a05a00;--bad:#b3261e;--chip:#eaf1fb;--user:#e8f0fe;--bot:#f0f2f4}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1318;--panel:#171c23;--ink:#e6ebf0;--mut:#94a1ae;--line:#2a323c;
+--acc:#4c9aff;--acc-ink:#04101f;--ok:#4cc38a;--warn:#e0a84a;--bad:#ff7b72;--chip:#1c2a3d;--user:#1b2a42;--bot:#1f252d}}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:18px;margin:0;letter-spacing:.5px}
+.pill{font-size:12px;padding:2px 9px;border-radius:99px;background:var(--chip);color:var(--ink);border:1px solid var(--line)}
+.pill.ok{color:var(--ok)}.pill.bad{color:var(--bad)}.pill.warn{color:var(--warn)}
+nav{display:flex;gap:4px;padding:6px 12px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{background:none;border:0;color:var(--mut);padding:8px 12px;border-radius:8px;cursor:pointer;font:inherit;white-space:nowrap}
+nav button.on{background:var(--chip);color:var(--ink);font-weight:600}
+main{flex:1;min-height:0;overflow:auto;padding:16px;max-width:1100px;width:100%;margin:0 auto}
+section{display:none}section.on{display:block}
+h2{font-size:16px;margin:0 0 10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+button.p,button.s{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;border:1px solid var(--line)}
+button.p{background:var(--acc);color:var(--acc-ink);border-color:var(--acc);font-weight:600}
+button.s{background:var(--panel);color:var(--ink)}
+button.d{color:var(--bad)}button:disabled{opacity:.5;cursor:default}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-width:100%}
+input[type=text],textarea{width:100%}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>.grow{flex:1;min-width:160px}
+.msgs{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.m{padding:9px 12px;border-radius:12px;max-width:85%;white-space:pre-wrap;word-wrap:anywhere}
+.m.user{background:var(--user);align-self:flex-end}.m.bot{background:var(--bot);align-self:flex-start}
+.m small{display:block;color:var(--mut);margin-top:4px}
+.chip{display:inline-block;font-size:12px;padding:1px 8px;border-radius:99px;background:var(--chip);margin:2px 4px 0 0}
+.chip.ok{color:var(--ok)}.chip.bad{color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}
+th{color:var(--mut);font-weight:600}
+.bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden}.bar>i{display:block;height:100%;background:var(--acc)}
+.bar.hot>i{background:var(--warn)}
+.appr{border:2px solid var(--warn);background:var(--panel);border-radius:12px;padding:12px;margin-bottom:10px}
+#banner{display:none;position:sticky;top:0;z-index:5;padding:8px 16px;background:var(--panel);border-bottom:2px solid var(--warn)}
+.mut{color:var(--mut)}.big{font-size:22px;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+@media (max-width:600px){main{padding:10px}.m{max-width:95%}}
+</style>
+</head>
+<body>
+<header>
+  <h1>JARVIS</h1>
+  <span class="pill" id="pModel">modelo…</span>
+  <span class="pill" id="pOllama">Ollama…</span>
+  <span class="pill" id="pBridge">Windows…</span>
+  <span class="pill" id="pVoice">voz: apagada</span>
+  <span class="pill" id="pGpu"></span>
+</header>
+<div id="banner"></div>
+<nav id="tabs"></nav>
+<main>
+<section id="chat">
+  <div class="msgs" id="msgs"></div>
+  <div class="row">
+    <input type="text" id="msgIn" class="grow" placeholder="Escribe una petición para JARVIS…" autocomplete="off" maxlength="4000">
+    <button class="p" id="sendBtn">Enviar</button>
+    <button class="s" id="newBtn" title="Nueva conversación">Nueva</button>
+  </div>
+  <p class="mut" id="busyNote"></p>
+</section>
+
+<section id="voz">
+  <div class="card">
+    <h2>Conversación por voz</h2>
+    <div class="row">
+      <span class="big" id="vState">apagada</span>
+      <span class="mut" id="vTurns"></span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Activación
+        <select id="vMode">
+          <option value="">(según ajustes)</option>
+          <option value="off">Siempre escuchando (sin palabra)</option>
+          <option value="model">«Hey Jarvis» (modelo)</option>
+          <option value="stt">«Jarvis» (reconocimiento de voz)</option>
+        </select>
+      </label>
+      <button class="p" id="vStart">Iniciar voz</button>
+      <button class="s" id="vStop">Parar</button>
+    </div>
+    <p class="mut">El micrófono solo está abierto mientras la voz está iniciada. No se guarda audio.
+    Las acciones sensibles piden tu permiso por voz o aquí.</p>
+    <p class="mut" id="vErr"></p>
+  </div>
+  <div class="card"><h2>Turnos recientes</h2><div id="vLog" class="msgs"></div></div>
+</section>
+
+<section id="permisos">
+  <div id="pendList"></div>
+  <div class="card"><h2>Política por herramienta</h2>
+    <p class="mut">«Preguntar» pide permiso cada vez. «Permitir» solo está disponible para riesgo medio/bajo; el riesgo alto siempre pregunta.</p>
+    <table id="polTable"></table></div>
+  <div class="card"><h2>Decisiones recientes</h2><table id="recentTable"></table></div>
+</section>
+
+<section id="memoria">
+  <div class="card"><h2>Recordar algo</h2>
+    <div class="row"><input type="text" id="factIn" class="grow" placeholder="Ej.: Mi gato se llama Miso" maxlength="2000"><button class="p" id="factBtn">Guardar</button></div>
+    <div id="factList" style="margin-top:10px"></div></div>
+  <div class="card"><h2>Documentos</h2>
+    <div class="row"><input type="text" id="idxIn" class="grow" placeholder="Carpeta o archivo a indexar (Documentos, Escritorio o Descargas)"><button class="p" id="idxBtn">Indexar</button></div>
+    <p class="mut" id="idxMsg"></p><table id="srcTable"></table></div>
+  <div class="card"><h2>Buscar en la memoria</h2>
+    <div class="row"><input type="text" id="memQ" class="grow" placeholder="Palabras clave"><button class="s" id="memBtn">Buscar</button></div>
+    <table id="memRes"></table></div>
+</section>
+
+<section id="historial">
+  <div class="card"><div class="row"><input type="text" id="hisQ" class="grow" placeholder="Buscar en el historial"><button class="s" id="hisBtn">Buscar</button></div></div>
+  <div class="grid"><div class="card"><h2>Sesiones</h2><table id="sesTable"></table></div>
+  <div class="card" style="grid-column:span 2"><h2 id="hisTitle">Mensajes</h2><div class="msgs" id="hisMsgs"></div></div></div>
+</section>
+
+<section id="registros">
+  <div class="card"><div class="row"><label>Registro <select id="logSel"><option>voice</option><option>approvals</option><option>bridge</option></select></label>
+  <button class="s" id="logBtn">Actualizar</button></div>
+  <p class="mut">Los registros no contienen texto privado, audio, contraseñas ni tokens.</p><table id="logTable"></table></div>
+</section>
+
+<section id="ajustes">
+  <div class="card"><h2>Ajustes de voz</h2><form id="setForm" class="grid"></form>
+  <div class="row" style="margin-top:10px"><button class="p" id="setBtn">Guardar</button><span class="mut" id="setMsg"></span></div></div>
+</section>
+
+<section id="estado">
+  <div class="grid" id="stateGrid"></div>
+</section>
+</main>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const h=(tag,attrs={},...kids)=>{const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')e.className=v;else if(k.startsWith('on'))e.addEventListener(k.slice(2),v);else e.setAttribute(k,v)}
+ for(const c of kids.flat())if(c!=null)e.append(c.nodeType?c:document.createTextNode(String(c)));return e};
+// ---- token (viaja en el fragmento: no llega al servidor ni a registros)
+let TOKEN=sessionStorage.getItem('jt')||'';
+if(location.hash.startsWith('#t=')){TOKEN=decodeURIComponent(location.hash.slice(3));sessionStorage.setItem('jt',TOKEN);history.replaceState(null,'',location.pathname)}
+if(!TOKEN){TOKEN=prompt('Token de JARVIS (aparece en la consola al iniciar):')||'';sessionStorage.setItem('jt',TOKEN)}
+async function api(path,opts={}){const o={method:'GET',...opts,headers:{'X-Jarvis-Token':TOKEN,...(opts.body?{'Content-Type':'application/json'}:{})}};
+ if(opts.body&&typeof opts.body!=='string')o.body=JSON.stringify(opts.body);
+ const r=await fetch(path,o);if(!r.ok){let m=r.status+'';try{const j=await r.json();m=j.detail||j.error||m}catch(e){}
+ throw new Error(m)}return r.json()}
+const fmtTime=t=>t?new Date(t*1000).toLocaleString():'';
+// ---- pestañas
+const TABS=[['chat','Chat'],['voz','Voz'],['permisos','Permisos'],['memoria','Memoria'],['historial','Historial'],['registros','Registros'],['ajustes','Ajustes'],['estado','Estado']];
+const tabs=$('#tabs');let cur='chat';
+TABS.forEach(([id,label])=>tabs.append(h('button',{'data-t':id,onclick:()=>show(id)},label)));
+function show(id){cur=id;document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===id));
+ tabs.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.t===id));
+ ({permisos:loadApprovals,memoria:loadMemory,historial:loadSessions,registros:loadLogs,ajustes:loadSettings,estado:refreshStatus})[id]?.()}
+// ---- chat
+let SID=localStorage.getItem('sid')||('gui-'+Date.now());localStorage.setItem('sid',SID);
+function addMsg(role,text,extra){const m=h('div',{class:'m '+role},text);if(extra)m.append(extra);$('#msgs').append(m);m.scrollIntoView({block:'end'});return m}
+async function loadChat(){try{const hist=await api('/api/history/'+encodeURIComponent(SID));$('#msgs').replaceChildren();hist.forEach(m=>addMsg(m.role==='user'?'user':'bot',m.content))}catch(e){}}
+let sending=false;
+async function send(){if(sending)return;const text=$('#msgIn').value.trim();if(!text)return;sending=true;$('#sendBtn').disabled=true;$('#msgIn').value='';
+ addMsg('user',text);const bot=addMsg('bot','…');const chips=h('div');bot.append(chips);let final='';
+ try{const r=await fetch('/api/chat',{method:'POST',headers:{'X-Jarvis-Token':TOKEN,'Content-Type':'application/json'},body:JSON.stringify({text,session_id:SID})});
+  if(!r.ok){throw new Error((await r.json()).detail||r.status)}
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
+   while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+2);if(!line.startsWith('data: '))continue;const ev=JSON.parse(line.slice(6));
+    if(ev.type==='tool_start')chips.append(h('span',{class:'chip','data-tool':ev.tool},'⚙ '+ev.tool+'…'));
+    else if(ev.type==='tool_end'){const c=chips.querySelector(`[data-tool="${ev.tool}"]:not(.ok):not(.bad)`)||chips.appendChild(h('span',{class:'chip'}));
+     c.className='chip '+(ev.success?'ok':'bad');c.textContent=(ev.success?'✓ ':'✗ ')+ev.tool+' ('+ev.latency+'s)'}
+    else if(ev.type==='approval_requested'){bot.firstChild.textContent='Esperando tu permiso…';refreshBanner()}
+    else if(ev.type==='final'){final=ev.text}}}
+  bot.firstChild.textContent=final||'(sin respuesta)'}catch(e){bot.firstChild.textContent='Error: '+e.message}
+ sending=false;$('#sendBtn').disabled=false;$('#msgIn').focus()}
+$('#sendBtn').onclick=send;$('#msgIn').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+$('#newBtn').onclick=()=>{SID='gui-'+Date.now();localStorage.setItem('sid',SID);$('#msgs').replaceChildren()};
+// ---- permisos
+async function decide(id,ok){try{await api('/api/approvals/'+id,{method:'POST',body:{approved:ok}})}catch(e){alert(e.message)}refreshBanner();if(cur==='permisos')loadApprovals()}
+function apprCard(p){return h('div',{class:'appr'},h('div',{class:'row'},h('strong',{},p.description),h('span',{class:'pill warn'},'riesgo '+p.risk)),
+ h('div',{class:'row',style:'margin-top:8px'},h('button',{class:'p',onclick:()=>decide(p.id,true)},'Permitir esta vez'),h('button',{class:'s d',onclick:()=>decide(p.id,false)},'Denegar')))}
+async function refreshBanner(){try{const a=await api('/api/approvals');const b=$('#banner');b.replaceChildren();
+ if(a.pending.length){b.style.display='block';b.append(h('strong',{},'JARVIS pide permiso: '),...a.pending.map(apprCard))}else b.style.display='none'}catch(e){}}
+async function loadApprovals(){const a=await api('/api/approvals');$('#pendList').replaceChildren(...a.pending.map(apprCard));
+ const t=$('#polTable');t.replaceChildren(h('tr',{},h('th',{},'Herramienta'),h('th',{},'Riesgo'),h('th',{},'Política')));
+ Object.entries(a.risk).forEach(([tool,risk])=>{const sel=h('select',{onchange:async e=>{try{await api('/api/policy/'+tool,{method:'PUT',body:{value:e.target.value}})}catch(x){alert(x.message);loadApprovals()}}},
+  ...a.policy_values.map(v=>{const o=h('option',{value:v},{ask:'Preguntar',allow:'Permitir',deny:'Denegar'}[v]);if((a.policy[tool]||'ask')===v)o.selected=true;if(v==='allow'&&risk==='alto')o.disabled=true;return o}));
+  t.append(h('tr',{},h('td',{},tool),h('td',{},risk),h('td',{},sel)))});
+ const r=$('#recentTable');r.replaceChildren(h('tr',{},h('th',{},'Cuándo'),h('th',{},'Herramienta'),h('th',{},'Resultado'),h('th',{},'Por')));
+ a.recent.forEach(p=>r.append(h('tr',{},h('td',{},fmtTime(p.created)),h('td',{},p.tool),h('td',{},p.state),h('td',{},p.decided_by))))}
+// ---- voz
+function setVoice(s){const names={off:'apagada',starting:'cargando modelos…',listening:'escuchando',transcribing:'transcribiendo',thinking:'pensando',speaking:'hablando',error:'error'};
+ $('#vState').textContent=names[s.state]||s.state;$('#vTurns').textContent=s.turns?s.turns+' turno(s)':'';$('#vErr').textContent=s.error||'';
+ const p=$('#pVoice');p.textContent='voz: '+(names[s.state]||s.state);p.className='pill '+(s.state==='error'?'bad':s.state==='off'?'':'ok');
+ $('#vStart').disabled=!['off','error'].includes(s.state);$('#vStop').disabled=s.state==='off'}
+$('#vStart').onclick=async()=>{try{setVoice(await api('/api/voice/start',{method:'POST',body:{mode:$('#vMode').value||undefined}}))}catch(e){$('#vErr').textContent=e.message}};
+$('#vStop').onclick=async()=>{try{setVoice(await api('/api/voice/stop',{method:'POST',body:{}}))}catch(e){$('#vErr').textContent=e.message}};
+function voiceTurn(ev){const l=$('#vLog');if(ev.transcript)l.append(h('div',{class:'m user'},ev.transcript));
+ if(ev.response)l.append(h('div',{class:'m bot'},ev.response,h('small',{},`stt ${ev.stt_s}s · agente ${ev.agent_s}s · 1er audio ${ev.first_audio_s}s`)));
+ if(!ev.transcript&&ev.cause)l.append(h('div',{class:'m bot'},'⚠ '+ev.cause));l.lastChild?.scrollIntoView({block:'end'})}
+// ---- eventos globales (SSE con cabecera de token)
+async function events(){for(;;){try{const r=await fetch('/api/events',{headers:{'X-Jarvis-Token':TOKEN}});const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+ for(;;){const{value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
+  while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+2);if(!line.startsWith('data: '))continue;const ev=JSON.parse(line.slice(6));
+   if(ev.type==='voice_state')setVoice(ev);else if(ev.type==='voice_turn')voiceTurn(ev);
+   else if(ev.type.startsWith('approval_')){refreshBanner();if(cur==='permisos')loadApprovals()}}}}catch(e){}await new Promise(r=>setTimeout(r,2000))}}
+// ---- memoria
+async function loadMemory(){try{const m=await api('/api/memory');
+ $('#factList').replaceChildren(...m.facts.map(f=>h('div',{class:'row'},h('span',{class:'grow'},f.text),h('button',{class:'s d',onclick:async()=>{await api('/api/memory/fact/'+f.id,{method:'DELETE'});loadMemory()}},'Olvidar'))));
+ const t=$('#srcTable');t.replaceChildren(h('tr',{},h('th',{},'Documento'),h('th',{},'Trozos'),h('th',{},'')));
+ m.sources.filter(s=>s.kind==='document').forEach(s=>t.append(h('tr',{},h('td',{},s.source),h('td',{},s.chunks),h('td',{},h('button',{class:'s d',onclick:async()=>{if(confirm('¿Quitar de la memoria? (no borra el archivo)')){await api('/api/memory/remove',{method:'POST',body:{source:s.source}});loadMemory()}}},'Quitar')))))}catch(e){$('#idxMsg').textContent=e.message}}
+$('#factBtn').onclick=async()=>{const t=$('#factIn').value.trim();if(!t)return;try{await api('/api/memory/remember',{method:'POST',body:{text:t}});$('#factIn').value='';loadMemory()}catch(e){alert(e.message)}};
+$('#idxBtn').onclick=async()=>{$('#idxMsg').textContent='Indexando…';try{const r=await api('/api/memory/index',{method:'POST',body:{path:$('#idxIn').value.trim()}});
+ $('#idxMsg').textContent=`${r.indexed} indexado(s), ${r.chunks} trozos, ${r.unchanged} sin cambios, ${Object.keys(r.skipped).length} omitidos`;loadMemory()}catch(e){$('#idxMsg').textContent='Error: '+e.message}};
+$('#memBtn').onclick=async()=>{const q=$('#memQ').value.trim();if(!q)return;const t=$('#memRes');t.replaceChildren(h('tr',{},h('th',{},'Tipo'),h('th',{},'Fuente'),h('th',{},'Contenido')));
+ (await api('/api/memory/search?q='+encodeURIComponent(q))).forEach(r=>t.append(h('tr',{},h('td',{},r.kind),h('td',{},r.source),h('td',{},r.content))))};
+// ---- historial
+async function loadSessions(){const s=await api('/api/history/sessions');const t=$('#sesTable');t.replaceChildren();
+ s.forEach(x=>t.append(h('tr',{},h('td',{},h('a',{href:'#',onclick:e=>{e.preventDefault();openSession(x.session_id)}},x.session_id),h('div',{class:'mut'},fmtTime(x.last)+' · '+x.messages+' msj')),
+ h('td',{},h('button',{class:'s d',onclick:async()=>{if(confirm('¿Borrar esta conversación?')){await api('/api/history/'+encodeURIComponent(x.session_id),{method:'DELETE'});loadSessions()}}},'Borrar')))))}
+async function openSession(sid){$('#hisTitle').textContent='Mensajes · '+sid;const m=await api('/api/history/'+encodeURIComponent(sid));$('#hisMsgs').replaceChildren(...m.map(x=>h('div',{class:'m '+(x.role==='user'?'user':'bot')},x.content,h('small',{},fmtTime(x.ts)+' · '+x.source))))}
+$('#hisBtn').onclick=async()=>{const q=$('#hisQ').value.trim();if(!q)return;$('#hisTitle').textContent='Resultados · '+q;const m=await api('/api/history/search?q='+encodeURIComponent(q));
+ $('#hisMsgs').replaceChildren(...m.map(x=>h('div',{class:'m '+(x.role==='user'?'user':'bot')},x.content,h('small',{},x.session+' · '+fmtTime(x.ts)))))};
+// ---- registros
+async function loadLogs(){const n=$('#logSel').value;const rows=await api('/api/logs/'+n+'?n=100');const t=$('#logTable');t.replaceChildren();
+ rows.reverse().forEach(r=>{const{ts,...rest}=r;t.append(h('tr',{},h('td',{},ts?fmtTime(ts):''),h('td',{},JSON.stringify(rest))))});if(!rows.length)t.append(h('tr',{},h('td',{},'Sin registros todavía.')))}
+$('#logBtn').onclick=loadLogs;$('#logSel').onchange=loadLogs;
+// ---- ajustes
+let SCHEMA=[];
+async function loadSettings(){const s=await api('/api/settings');SCHEMA=s.schema;const f=$('#setForm');f.replaceChildren();
+ s.schema.forEach(sc=>{const v=s.values[sc.key];let inp;
+  if(sc.type==='bool'){inp=h('input',{type:'checkbox','data-k':sc.key});inp.checked=!!v}
+  else if(sc.options){inp=h('select',{'data-k':sc.key},...sc.options.map(o=>{const op=h('option',{value:o},o);if(o===v)op.selected=true;return op}))}
+  else{inp=h('input',{type:'number','data-k':sc.key,value:v,step:sc.type==='float'?'any':'1',min:sc.min??'',max:sc.max??''})}
+  f.append(h('label',{},h('div',{class:'mut'},sc.key.replace('voice.','')),inp))})}
+$('#setBtn').onclick=async e=>{e.preventDefault();const body={};document.querySelectorAll('#setForm [data-k]').forEach(i=>{const sc=SCHEMA.find(s=>s.key===i.dataset.k);
+ body[i.dataset.k]=sc.type==='bool'?i.checked:(sc.type==='int'||sc.type==='float')?Number(i.value):i.value});
+ try{const r=await api('/api/settings',{method:'PUT',body});$('#setMsg').textContent='Guardado. '+r.note}catch(x){$('#setMsg').textContent='Error: '+x.message}};
+// ---- estado
+const bar=(pct,hot)=>h('div',{class:'bar'+(hot?' hot':'')},h('i',{style:'width:'+Math.min(100,pct)+'%'}));
+async function refreshStatus(){try{const s=await api('/api/status');
+ $('#pModel').textContent='modelo: '+s.model;const o=$('#pOllama');o.textContent='Ollama '+(s.ollama.up?'activo':'caído');o.className='pill '+(s.ollama.up?'ok':'bad');
+ const b=$('#pBridge');if(s.bridge){b.textContent='Windows '+(s.bridge.up?'conectado':'sin puente');b.className='pill '+(s.bridge.up?'ok':'bad')}
+ const g=$('#pGpu');if(s.gpu.available){g.textContent=`VRAM ${(s.gpu.vram_used_mb/1024).toFixed(1)}/${(s.gpu.vram_total_mb/1024).toFixed(1)} GB`}
+ setVoice(s.voice);$('#busyNote').textContent=s.busy?'JARVIS está trabajando en una petición…':'';
+ if(cur==='estado'){const grid=$('#stateGrid');grid.replaceChildren();
+  const card=(t,...k)=>grid.append(h('div',{class:'card'},h('h2',{},t),...k));
+  card('Ollama',h('div',{},s.ollama.up?'Activo en '+s.ollama.host:'Caído: '+(s.ollama.error||'')),...s.ollama.loaded.map(m=>h('div',{class:'mut'},`${m.name}: ${m.vram_gb} GB en VRAM`)));
+  if(s.gpu.available)card('GPU',h('div',{},s.gpu.name),bar(100*s.gpu.vram_used_mb/s.gpu.vram_total_mb,s.gpu.vram_used_mb/s.gpu.vram_total_mb>.9),h('div',{class:'mut'},`${s.gpu.vram_used_mb} / ${s.gpu.vram_total_mb} MB · ${s.gpu.util_pct}% · ${s.gpu.temp_c}°C`));
+  if(s.system.ram_total_gb)card('Memoria RAM',bar(100*s.system.ram_used_gb/s.system.ram_total_gb),h('div',{class:'mut'},`${s.system.ram_used_gb} / ${s.system.ram_total_gb} GB (WSL)`));
+  if(s.bridge)card('Puente de Windows',h('div',{},s.bridge.up?`Conectado · ${s.bridge.apps} apps permitidas`:'Sin conexión: '+(s.bridge.error||'')),...(s.bridge.read_roots||[]).map(r=>h('div',{class:'mut'},'leer: '+r)),...(s.bridge.write_roots||[]).map(r=>h('div',{class:'mut'},'escribir: '+r)));
+  if(s.memory&&s.memory.chunks!=null)card('Memoria',h('div',{},`${s.memory.documents} documento(s) · ${s.memory.facts} recuerdo(s) · ${s.memory.chunks} trozos`),h('div',{class:'mut'},s.memory.db_kb+' KB'))}}catch(e){}}
+// ---- arranque
+show('chat');loadChat();refreshStatus();refreshBanner();events();setInterval(refreshStatus,5000);setInterval(refreshBanner,4000);
+</script>
+</body>
+</html>

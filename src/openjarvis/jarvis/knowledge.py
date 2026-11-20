@@ -98,11 +98,17 @@ def default_roots(bridge_caps: dict[str, Any] | None = None) -> list[Path]:
             roots.append(p)
     if not roots:
         users = Path("/mnt/c/Users")
-        if users.is_dir():
-            for u in users.iterdir():
-                for sub in ("Documents", "Desktop", "Downloads"):
+        try:
+            profiles = list(users.iterdir()) if users.is_dir() else []
+        except OSError:
+            profiles = []
+        for u in profiles:
+            for sub in ("Documents", "Desktop", "Downloads"):
+                try:
                     if (u / sub).is_dir():
                         roots.append(u / sub)
+                except OSError:  # perfil de otro usuario de Windows sin permiso
+                    continue
     return roots
 
 
