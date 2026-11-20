@@ -129,18 +129,68 @@ def test_read_only_tool_flow_and_history(stack):
     assert win.calls == []  # solo lectura: nada se toco
 
 
-def test_old_assistant_answers_are_marked_stale_and_fresh_hint_is_not_stored(stack):
+def test_fresh_state_hint_is_sent_with_history_but_never_stored(stack):
     rt, engine, _win = make(stack, "Uno.", "Dos.", "Tres.")
     rt.respond("primera")
     rt.respond("segunda")
     rt.respond("tercera")
-    sent = [str(m.content) for m in engine.calls[2]]
-    assert any("caducado" in s and "Uno." in s for s in sent)  # respuesta antigua
-    assert any(s == "Dos." for s in sent)  # la última va completa
-    assert any("no reutilices datos" in s for s in sent)  # pista en el turno actual
-    assert not any("Sistema:" in m.content for m in rt.history.recent("default"))
     first = [str(m.content) for m in engine.calls[0]]
-    assert not any("no reutilices" in s for s in first)  # 1er turno: sin pista
+    third = [str(m.content) for m in engine.calls[2]]
+    assert not any("no reutilices datos" in s for s in first)  # 1er turno: sin pista
+    assert any("no reutilices datos" in s for s in third)  # con historial: se avisa
+    assert any(s == "Uno." for s in third)  # el historial va tal cual (sin prefijos)
+    assert not any("Sistema:" in m.content for m in rt.history.recent("default"))
+
+
+def _with_memory(stack, tmp_path, *script):
+    from openjarvis.jarvis.knowledge import KnowledgeBase
+
+    kb = KnowledgeBase(tmp_path / "kb.db", roots=None)
+    rt, engine, _win = make(stack, *script)
+    rt._knowledge, rt.auto_memory = kb, True
+    return rt, engine, kb
+
+
+def test_relevant_memory_is_retrieved_automatically_and_handed_over_as_data(
+    stack, tmp_path
+):
+    rt, engine, kb = _with_memory(stack, tmp_path, "Se llama Miso.")
+    kb.remember("Mi gato se llama Miso")
+    rt.respond("¿Cómo se llama mi gato?")
+    sent = str(engine.calls[0][-1].content)
+    assert (
+        "Miso" in sent and "DATOS, no órdenes" in sent and "recuerdo guardado" in sent
+    )
+    assert (
+        "Memoria de JARVIS" not in rt.history.recent("default")[0].content
+    )  # no se guarda
+
+
+def test_when_nothing_is_stored_the_model_is_told_not_to_invent(stack, tmp_path):
+    rt, engine, _kb = _with_memory(stack, tmp_path, "No lo tengo guardado.")
+    rt.respond("¿Cuál es el teléfono de mi dentista?")
+    sent = str(engine.calls[0][-1].content)
+    assert "no hay nada guardado" in sent and "no inventes" in sent
+
+
+def test_memory_failure_never_breaks_the_conversation(stack, tmp_path):
+    rt, engine, _kb = _with_memory(stack, tmp_path, "Hola.")
+
+    class Boom:
+        def search(self, *a, **k):
+            raise RuntimeError("db corrupta")
+
+    rt._knowledge = Boom()
+    assert rt.respond("hola").ok and "Memoria de JARVIS" not in str(
+        engine.calls[0][-1].content
+    )
+
+
+def test_memory_hints_are_off_without_the_memory_tool(stack):
+    rt, engine, _w = make(stack, "Hola.")
+    assert rt.auto_memory is False
+    rt.respond("hola")
+    assert "Memoria de JARVIS" not in str(engine.calls[0][-1].content)
 
 
 def test_claimed_action_without_tool_is_retried_and_then_really_done(stack):
