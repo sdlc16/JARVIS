@@ -147,11 +147,11 @@ def test_list_remove_source_and_clear(kb):
 def test_missing_path_and_windows_path_mapping(kb):
     with pytest.raises(FileNotFoundError):
         kb.index_path(kb.docs / "no_existe.txt")
-    assert str(_win_to_wsl(r"C:\Users\PC\Documents")) == "/mnt/c/Users/PC/Documents"
+    assert str(_win_to_wsl(r"C:\Users\Ana\Documents")) == "/mnt/c/Users/Ana/Documents"
     assert _win_to_wsl("/home/x") is None
-    caps = {"read_roots": [r"C:\Users\PC\Documents", r"D:\datos"]}
+    caps = {"read_roots": [r"C:\Users\Ana\Documents", r"D:\datos"]}
     assert [str(p) for p in default_roots(caps)] == [
-        "/mnt/c/Users/PC/Documents",
+        "/mnt/c/Users/Ana/Documents",
         "/mnt/d/datos",
     ]
 
@@ -180,7 +180,7 @@ def test_default_roots_ignore_windows_profiles_without_permission(
     real_is_dir = Path.is_dir
 
     def is_dir(self):
-        if "Administrador" in str(self):
+        if "OtroPerfil" in str(self):
             raise PermissionError(13, "Permission denied", str(self))
         return real_is_dir(self)
 
@@ -189,6 +189,6 @@ def test_default_roots_ignore_windows_profiles_without_permission(
     from openjarvis.cli import gui_cmd
 
     monkeypatch.setattr(
-        Path, "iterdir", lambda self: iter([Path("/mnt/c/Users/Administrador")])
+        Path, "iterdir", lambda self: iter([Path("/mnt/c/Users/OtroPerfil")])
     )
     assert all("bridge.jsonl" in str(p) for p in gui_cmd._bridge_log_candidates())

@@ -15,6 +15,27 @@
 
 ---
 
+## JARVIS (fork personal sobre OpenJarvis)
+
+Asistente personal **local** para Windows 11 (WSL2 + Ubuntu): voz en español, control de Windows con permisos, memoria y documentos locales, interfaz gráfica. **Ollama es el único motor de inferencia** (sin nube, sin APIs de pago, sin claves).
+
+| | |
+|---|---|
+| Instalar en Windows | [`INSTALL_WINDOWS.md`](INSTALL_WINDOWS.md) |
+| Usar / validar | [`JARVIS_USAGE.md`](JARVIS_USAGE.md) |
+| Estado real, medidas y límites | [`JARVIS_PROGRESS.md`](JARVIS_PROGRESS.md) |
+| Reglas del proyecto, plan, tareas | `CLAUDE.md`, `JARVIS_MASTER_PLAN.md`, `DEVELOPMENT_TASKS.md` |
+
+**Arquitectura (dos procesos):** núcleo OpenJarvis en WSL2 (`src/openjarvis/jarvis/` runtime + memoria + GUI, `src/openjarvis/voice/` VAD/STT/TTS/wake-word/barge-in) ⟷ puente nativo de Windows (`windows_bridge/`, solo localhost/WSL, token DPAPI) expuesto al agente como herramientas `windows_*`.
+
+**Implementado y verificado:** voz (faster-whisper + Kokoro, VAD adaptativo, confirmación hablada), puente de Windows (36/36 en Windows real), runtime unificado con permisos e historial, memoria persistente y documentos (`jarvis docs`), interfaz local (`jarvis gui`), arranque con un clic. **Con audio/voz sintéticos y desactivados por defecto hasta validarlos con voz real:** wake-word y barge-in. **Pendiente:** Brave/YouTube, visión/OCR, hábitos y proactividad, modo gaming, hotkey global, acceso móvil (arquitectura lista, no expuesta).
+
+**Hardware de referencia:** GPU NVIDIA de 8 GB (medido en una RTX 4060; `qwen3:8b` ≈ 5.8 GB de VRAM), 32 GB de RAM, Windows 11. La documentación antigua de planificación menciona una RTX 3060: el valor medido es el de `JARVIS_PROGRESS.md`.
+
+Lo que sigue es el README original de OpenJarvis (upstream).
+
+---
+
 > **[Documentation](https://open-jarvis.github.io/OpenJarvis/)**
 >
 > **[Project Site](https://scalingintelligence.stanford.edu/blogs/openjarvis/)**

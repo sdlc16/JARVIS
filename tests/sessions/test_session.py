@@ -80,10 +80,13 @@ class TestSessionStore:
         assert reloaded.identity.channel_ids.get("discord") == "d456"
         store.close()
 
-    def test_session_expiry(self, tmp_path):
+    def test_session_expiry(self, tmp_path, monkeypatch):
         store = self._make_store(tmp_path, max_age_hours=0.0001)  # ~0.36 seconds
         s1 = store.get_or_create("user1")
-        time.sleep(0.5)
+        # Reloj simulado (mismo motivo que test_decay): el reloj de pared de WSL2
+        # puede saltar hacia atras durante un sleep real y la sesion no caducaba.
+        real_time = time.time
+        monkeypatch.setattr(time, "time", lambda: real_time() + 1.0)
         s2 = store.get_or_create("user1")
         assert s1.session_id != s2.session_id
         store.close()

@@ -10,7 +10,7 @@ Asistente personal local para este PC (Windows 11 + WSL2). Todo corre en tu máq
 | Arrancar sin abrir ventana | `scripts\start-jarvis.ps1 -NoWindow` |
 | **Parar** | `scripts\stop-jarvis.ps1` (añade `-Bridge` para parar también el puente de Windows) |
 | Acceso al iniciar sesión (opcional) | `scripts\install-shortcuts.ps1 -Autostart` · quitarlo: `-Remove` |
-| Solo terminal | `wsl -d Ubuntu-24.04` → `cd /mnt/c/Users/PC/Desktop/JARVIS` → `uv run --no-sync jarvis gui` |
+| Solo terminal | `wsl -d Ubuntu-24.04` → `cd /mnt/c/Users/<usuario>/Desktop/JARVIS` → `uv run --no-sync jarvis gui` |
 
 El script arranca, en este orden: comprobación de WSL2 y Ollama → puente nativo de Windows (oculto) → interfaz (`jarvis gui`). No mantiene el PC despierto: Windows puede suspenderse con normalidad.
 
@@ -42,7 +42,7 @@ Todo local: el puente solo escucha en la interfaz de WSL con un token cifrado co
 | «Sin puente» (Windows) | volver a ejecutar `start-jarvis.ps1`; revisa `%LOCALAPPDATA%\JARVIS\logs\bridge.jsonl` |
 | La voz no oye / `Connection refused` de audio | WSLg se cuelga a veces: `wsl --shutdown` y volver a arrancar |
 | Respuestas lentas la primera vez | el modelo se carga en VRAM (~5.8 GB); después queda residente 30 min |
-| Validar el sistema | `wsl -d Ubuntu-24.04 -- bash -lc "cd /mnt/c/Users/PC/Desktop/JARVIS && uv run --no-sync jarvis test --suite full"` |
+| Validar el sistema | `wsl -d Ubuntu-24.04 -- bash -lc "cd /mnt/c/Users/<usuario>/Desktop/JARVIS && uv run --no-sync jarvis test --suite full"` |
 
 ## Lo único que necesita tu presencia (una sola sesión, ~10 min)
 
