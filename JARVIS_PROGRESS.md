@@ -91,6 +91,19 @@ Verificación real (no simulada): la ventana se confirma vía la API Win32 real 
 
 **Nota menor no bloqueante:** quedaron 2-3 ventanas vacías del Bloc de notas abiertas de una ronda de prueba previa al fix (antes de que la limpieza automática existiera) — sin contenido, sin datos, cerrables manualmente cuando convenga.
 
+### Fase 2 (voz) — riesgo de arquitectura resuelto antes de escribir código
+
+Antes de empezar T2.1+, se investigó la mayor incógnita de la Fase 2: si WSL2 puede acceder al micrófono/altavoces reales de Windows (si no, habría que meter el audio por el puente nativo, con la latencia y complejidad que eso añade).
+
+**Resultado: SÍ puede, de forma nativa, sin el puente.** WSLg expone un servidor PulseAudio real (`$PULSE_SERVER=unix:/mnt/wslg/PulseServer`) con una fuente `RDPSource` (micrófono real de Windows, 1ch 44100Hz) y un sumidero `RDPSink` (altavoces reales). Instalado `pulseaudio-utils`/`alsa-utils` (gratis, apt) y confirmado con una captura real de 2s (`parecord --device=RDPSource`) que produjo un WAV de ~323KB, no vacío — el canal de audio real funciona de extremo a extremo, no es una suposición. **Esto significa que T2.1-T2.6 pueden implementarse con librerías Python estándar (sounddevice/PortAudio hablando con PulseAudio vía este socket), sin pasar el audio por `windows_bridge/`.**
+
+**Además, ya existe código reutilizable** (cumple la regla de `CLAUDE.md` de revisar `src/openjarvis/` antes de escribir nada nuevo) que no estaba documentado como tal: `src/openjarvis/speech/` ya tiene un patrón de registro (`SpeechRegistry`/`TTSRegistry`, en `core/registry.py`) con:
+- `faster_whisper.py` → `FasterWhisperBackend` **completo y funcional** (toma bytes de audio, transcribe, devuelve texto+segmentos+idioma) — solo falta instalar la dependencia (`uv sync --extra speech`) y conectarlo a un stream de micrófono real.
+- `kokoro_tts.py` → `KokoroTTSBackend` **completo y funcional** (texto → WAV) — por defecto en inglés (`lang_code="a"`, voces `af_*`/`am_*`); para "español latam, voz masculina" (criterio de T2.4) hay que cambiar a `lang_code="e"` (español) y una voz `em_*`, y validar si esa voz suena natural en latam o si hace falta buscar alternativa — **pendiente de decidir en T2.4, no bloqueante ahora**.
+- `openai_whisper.py`, `deepgram.py`, `cartesia_tts.py`, `openai_tts.py` existen en el repo pero son **de pago — nunca se activan**, tal como exige `CLAUDE.md`; quedan inertes (ni se instalan sus dependencias ni se seleccionan como backend activo).
+
+**No hay todavía:** detector de VAD (T2.1), wake-word (T2.2), ni el glue code que conecte captura de audio (PulseAudio) → VAD → STT → agente → TTS → reproducción. Es el siguiente bloque de trabajo.
+
 ## Sesión de instalación en PC real (2026-11-19) — checkpoint antes de reiniciar Windows
 
 **Esta sesión corre directamente sobre el PC Windows real del usuario** (confirmado: `[System.Environment]::OSVersion` → Windows NT 10.0.26100, PowerShell 5.1 nativo, no WSL/Linux), a diferencia de la sesión en la nube descrita más abajo en este documento.
