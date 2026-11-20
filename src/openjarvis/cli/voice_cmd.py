@@ -156,6 +156,14 @@ def _print_result(console: Console, result: VoiceTurnResult) -> None:
     help="Tope de tokens de la respuesta (por defecto: breve, pensado para voz).",
 )
 @click.option(
+    "--wake",
+    "wake_mode",
+    type=click.Choice(["off", "model", "stt"]),
+    default=None,
+    help="Palabra de activacion (defecto: [voice] wake_mode). model = openWakeWord "
+    "'Hey Jarvis' (sin STT); stt = Whisper busca 'Jarvis' en frases cortas.",
+)
+@click.option(
     "--debug-audio-dir",
     "debug_audio_dir",
     default=None,
@@ -176,6 +184,7 @@ def voice(
     max_wait_s: float | None,
     max_failures: int | None,
     max_tokens: int | None,
+    wake_mode: str | None,
     debug_audio_dir: str | None,
 ) -> None:
     """Conversa con Jarvis por voz (microfono y altavoces reales)."""
@@ -328,6 +337,46 @@ def voice(
 
     def on_ready() -> None:
         console.print("[yellow bold]Habla ahora...[/yellow bold]")
+
+    mode = wake_mode or vc.wake_mode
+    if mode != "off":
+        from openjarvis.voice.wake_session import run_wake_session
+
+        detector = None
+        if mode == "model":
+            from openjarvis.voice.wakeword import WakeWordDetector, WakeWordUnavailable
+
+            try:
+                detector = WakeWordDetector(
+                    vc.wake_model, vc.wake_threshold, vc.wake_patience
+                )
+            except WakeWordUnavailable as exc:
+                console.print(f"[red]Palabra de activacion no disponible:[/red] {exc}")
+                sys.exit(1)
+        console.print(
+            f"[green]Esperando la palabra de activacion[/green] (modo {mode}; di "
+            f"'Hey Jarvis'). Tras activarse converso sin repetirla hasta "
+            f"{vc.wake_followup_s:.0f}s de silencio. Ctrl+C para salir."
+        )
+        ws = run_wake_session(
+            pipeline,
+            mode=mode,
+            detector=detector,
+            word=vc.wake_word,
+            followup_s=vc.wake_followup_s,
+            max_tokens=effective_max_tokens,
+            max_wakes=num_turns,
+            on_waiting=lambda: console.print("[dim]escuchando (en espera)...[/dim]"),
+            on_wake=lambda w: console.print(
+                f"[yellow bold]Activado[/yellow bold] [dim]({w.get('mode')})[/dim]"
+            ),
+            on_result=lambda r: _print_result(console, r),
+        )
+        console.print(
+            f"\n[dim]{ws.wakes} activacion(es), {ws.turns_ok} turno(s) completado(s); "
+            f"fin: {ws.stopped_reason}.[/dim]"
+        )
+        return
 
     summary = run_session(
         pipeline,

@@ -1421,6 +1421,12 @@ class VoiceConfig:
     ollama_keep_alive: str = "30m"  # modelo residente tras cada uso
     confirm_by_voice: bool = True  # pedir permisos hablando (ademas de la GUI)
     confirm_timeout_s: float = 30.0  # sin respuesta => se deniega
+    wake_mode: str = "off"  # off | model (openWakeWord) | stt (Whisper por frase corta)
+    wake_model: str = "hey_jarvis"  # modelo openWakeWord (ingles; sin entrenar espanol)
+    wake_threshold: float = 0.5  # 0-1; medido: 0 falsos positivos en 10 min de ruido
+    wake_patience: int = 2  # bloques de 80 ms seguidos sobre el umbral
+    wake_word: str = "jarvis"  # palabra que busca el modo stt en la transcripcion
+    wake_followup_s: float = 8.0  # tras responder, espera esto sin pedir "Hey Jarvis"
     debug_audio_dir: str = ""  # opt-in: save each utterance WAV here (privacy!)
 
 

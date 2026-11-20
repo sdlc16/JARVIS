@@ -47,3 +47,18 @@ def test_voice_command_exposes_the_tuning_flags():
     out = CliRunner().invoke(cli, ["voice", "--help"]).output
     for flag in ("--silence-ms", "--max-wait-s", "--max-failures", "--debug-audio-dir"):
         assert flag in out
+
+
+def test_wake_word_defaults_are_off_until_validated_with_a_real_voice():
+    vc = VoiceConfig()
+    assert vc.wake_mode == "off"  # no se activa solo: falta validar con voz humana
+    assert vc.wake_model == "hey_jarvis" and vc.wake_patience >= 2
+    assert validate_config_key("voice.wake_mode") is str
+    assert validate_config_key("voice.wake_threshold") is float
+
+
+def test_voice_command_exposes_the_wake_option():
+    from openjarvis.cli.voice_cmd import voice
+
+    res = CliRunner().invoke(voice, ["--help"])
+    assert "--wake" in res.output and "model" in res.output and "stt" in res.output

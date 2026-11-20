@@ -121,6 +121,8 @@ speech = [
     "webrtcvad>=2.0.10",
     "numpy>=1.24",
 ]
+# Palabra de activacion local (ONNX, CPU). Modelo: openwakeword.utils.download_models()
+wakeword = ["openwakeword>=0.6.0", "onnxruntime>=1.16"]
 speech-deepgram = ["deepgram-sdk>=3.0"]
 eval-wandb = ["wandb>=0.17"]
 eval-sheets = ["gspread>=6.0", "google-auth>=2.0"]

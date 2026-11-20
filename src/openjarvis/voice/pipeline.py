@@ -358,6 +358,72 @@ class VoicePipeline:
             pcm, stats = segment_utterance(mic.frames(), vad or self._vad)
         return pcm, stats, startup, dead
 
+    def wait_for_wake(
+        self,
+        *,
+        mode: str = "model",
+        detector: Any = None,
+        word: str = "jarvis",
+        on_ready: Callable[[], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Bloquea hasta oir la palabra de activacion. Nada se guarda ni se envia.
+
+        mode="model": openWakeWord sobre bloques de 80 ms (CPU, sin STT).
+        mode="stt": frases cortas por VAD -> Whisper -> busca `word`.
+        Devuelve {"mode", "score"|"text", "seconds"}. Lanza CaptureError si falla
+        el micro; devuelve {"stopped": True} si `should_stop()` se cumple.
+        """
+        from openjarvis.voice.wakeword import matches_wake_word
+
+        t0 = time.monotonic()
+        with self._capture() as mic:
+            if on_ready is not None:
+                on_ready()
+            if mode == "model":
+                if detector is None:
+                    raise ValueError("mode=model requiere un detector")
+
+                def frames() -> Any:
+                    for f in mic.frames():
+                        if should_stop is not None and should_stop():
+                            return
+                        yield f
+
+                res = detector.listen(frames())
+                if res.detected:
+                    return {
+                        "mode": mode,
+                        "score": res.score,
+                        "seconds": time.monotonic() - t0,
+                    }
+                return {"stopped": True, "mode": mode, "seconds": time.monotonic() - t0}
+
+            cfg = replace(
+                self._vad.config,
+                silence_timeout_ms=600,
+                no_speech_timeout_ms=0,
+                max_utterance_ms=4000,
+                min_speech_ms=200,
+            )
+            frames_it = mic.frames()
+            while not (should_stop is not None and should_stop()):
+                vad = VoiceActivityDetector(cfg)
+                vad.noise_floor = self._vad.noise_floor
+                pcm, wstats = segment_utterance(frames_it, vad)
+                if wstats.end_reason == EndReason.CAPTURE_ENDED and not pcm:
+                    break  # el micro se corto: no girar en vacio
+                if not pcm:
+                    continue
+                text, _lang, _p = self.transcribe(pcm)
+                if matches_wake_word(text, word):
+                    return {
+                        "mode": mode,
+                        "text": text,
+                        "seconds": time.monotonic() - t0,
+                    }
+        return {"stopped": True, "mode": mode, "seconds": time.monotonic() - t0}
+
     def transcribe(self, pcm: bytes) -> tuple[str, str | None, float | None]:
         """PCM crudo -> (texto, idioma, probabilidad_de_idioma)."""
         wav_bytes = audio_io.pcm_to_wav_bytes(pcm)
@@ -537,6 +603,7 @@ class VoicePipeline:
         temperature: float = 0.7,
         max_tokens: int = DEFAULT_VOICE_MAX_TOKENS,
         on_ready: Callable[[], None] | None = None,
+        no_speech_timeout_ms: int | None = None,
     ) -> VoiceTurnResult:
         """Un ciclo completo: escuchar -> transcribir -> responder -> hablar.
 
@@ -559,7 +626,13 @@ class VoicePipeline:
 
         # 1) captura + VAD -------------------------------------------------
         try:
-            pcm, stats, startup, dead = self.listen_once(on_ready)
+            turn_vad = None
+            if no_speech_timeout_ms is not None:
+                turn_vad = VoiceActivityDetector(
+                    replace(self._vad.config, no_speech_timeout_ms=no_speech_timeout_ms)
+                )
+                turn_vad.noise_floor = self._vad.noise_floor
+            pcm, stats, startup, dead = self.listen_once(on_ready, vad=turn_vad)
         except CaptureError as exc:
             return done(
                 TurnOutcome.CAPTURE_ERROR,
