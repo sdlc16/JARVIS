@@ -49,6 +49,19 @@ def _clean_registries() -> None:
     reset_event_bus()
 
 
+@pytest.fixture(autouse=True)
+def _no_update_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Silence the "new version available" banner during tests.
+
+    On a machine with real network access and a newer PyPI release, the
+    banner leaked into ``CliRunner`` output and broke every ``--json``
+    assertion (9 tests failed only locally, never under CI where ``CI=true``
+    already disables the check). Tests that exercise the check itself
+    (tests/cli/test_version_check.py) reset these variables explicitly.
+    """
+    monkeypatch.setenv("OPENJARVIS_NO_UPDATE_CHECK", "1")
+
+
 # ---------------------------------------------------------------------------
 # Hardware fixtures
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ Este archivo se carga automáticamente en cada sesión de Claude Code sobre este
 
 ## Qué es este proyecto
 
-Estamos convirtiendo **OpenJarvis** (framework de investigación de Stanford Hazy Research) en **JARVIS**, un asistente personal autónomo para un PC Windows (RTX 3060 8GB VRAM, 32GB RAM, i5-12400F, SSD 1TB). Primera entrega funcional: **11 de diciembre de 2026**.
+Estamos convirtiendo **OpenJarvis** (framework de investigación de Stanford Hazy Research) en **JARVIS**, un asistente personal autónomo para un PC Windows (**RTX 4060 8GB VRAM** — medido con `nvidia-smi`, los documentos de planificación antiguos dicen RTX 3060 —, 32GB RAM, i5-12400F, SSD 1TB). Primera entrega funcional: **11 de diciembre de 2026**.
 
 ## Principio fundamental — no negociable
 
@@ -45,6 +45,24 @@ El catálogo de modelos de OpenJarvis (`intelligence/model_catalog.py`) no decla
 
 Ver `CLAUDE_GEMINI_WORKFLOW.md` para el detalle completo. Resumen: Claude diseña y revisa todo; Gemini implementa módulos acotados ya especificados; nunca se tocan los mismos archivos desde dos ramas activas a la vez; nada se integra sin revisión de Claude ni sin tests. **Nota de desambiguación:** "Gemini" aquí se refiere siempre al asistente de desarrollo (Gemini/Antigravity escribiendo código bajo especificación de Claude), nunca a la API de Gemini como proveedor de inferencia de JARVIS — esa segunda posibilidad está descartada (ver regla de presupuesto y proveedores arriba).
 
-## Estado de la planificación
+## Estado del proyecto
 
-Estos documentos (`JARVIS_MASTER_PLAN.md`, `DEVELOPMENT_TASKS.md`, `JARVIS_ROADMAP.md`, `CLAUDE_GEMINI_WORKFLOW.md`, `GEMINI_TASK_PACK.md`, este `CLAUDE.md`) son una **propuesta documental de planificación, todavía no autorizada**. Ninguna implementación empieza hasta que el usuario dé su autorización explícita para pasar de planificación a código. Una vez autorizada, el trabajo avanza por módulos siguiendo `DEVELOPMENT_TASKS.md`, y no se vuelve a replanificar la arquitectura completa salvo que surja un bloqueo real.
+La implementación **está autorizada y en curso** (el usuario autorizó pasar de planificación a código). El trabajo avanza por módulos siguiendo `DEVELOPMENT_TASKS.md`; el estado real y las evidencias viven en `JARVIS_PROGRESS.md` (léelo al empezar cualquier sesión). No se vuelve a replanificar la arquitectura completa salvo que surja un bloqueo real.
+
+## Metodología permanente de desarrollo y QA — vale para toda sesión y todo modelo
+
+Objetivo: que el usuario no descubra errores que una prueba técnica habría detectado. Claude implementa, verifica, corrige y valida de forma autónoma; pide validación humana **solo** cuando es imprescindible (hablar al micrófono real, UAC, reinicios).
+
+**Ciclo por funcionalidad:** investigar el código existente y reutilizar lo probado → identificar dependencias, conflictos de recursos (CPU/RAM/VRAM) y riesgos → fijar criterios de aceptación medibles → implementar → pruebas → corregir → repetir hasta verificar → regresión → documentar → validación humana solo si hace falta. No se pide al usuario probar mientras queden errores técnicos conocidos o verificaciones que Claude pueda hacer solo.
+
+**Pirámide de pruebas:** (1) análisis estático (`ruff`, imports, tipos); (2) unitarias con casos normales, límite, entradas inválidas y excepciones; (3) integración entre componentes; (4) end-to-end del flujo completo; (5) regresión de lo ya implementado; (6) **entorno real** (Windows 11, WSL2, Ollama, GPU, micrófono, altavoces) cuando corresponda. Los mocks aíslan componentes pero **nunca** se presentan como evidencia de funcionamiento real: todo informe distingue *simulado*, *grabación controlada* y *hardware real*.
+
+**Autocorrección:** ante un fallo → identificar el error exacto → causa raíz → clasificar (código / configuración / dependencia / entorno / hardware / arquitectura) → corregir el origen → repetir la prueba, las relacionadas y la regresión → registrarlo. Prohibido desactivar pruebas, rebajar criterios o esconder errores. Un test que asumía el estado del entorno (p. ej. "torch no está instalado") se corrige simulando la condición, no ignorándolo. Las pruebas nuevas deben demostrar que **pueden fallar** (comprobación por mutación: reintroducir el defecto y ver que fallan).
+
+**Medir, no asumir:** latencias por etapa, niveles de señal, VRAM (`nvidia-smi` / `ollama ps`) y consumo se miden en la máquina real antes de fijar un valor por defecto, y la justificación queda en el código o en `JARVIS_PROGRESS.md`. Los parámetros ajustables viven en config (`[voice]`, etc.), no en constantes escondidas.
+
+**Automatización y diagnóstico:** `jarvis test` es el comando único de validación (análisis estático + suites relevantes, código de salida correcto). Los tests viven en `tests/` espejando `src/`; las grabaciones de prueba son sintéticas y versionables (`tests/voice/fixtures`). Logs estructurados con identificador de ejecución (`~/.openjarvis/logs/voice.jsonl`) **sin** texto privado, audio, contraseñas ni tokens. Guardar audio del usuario es siempre opt-in y temporal. Nada de grabación continua ni captura permanente de pantalla.
+
+**Reglas de autonomía (permanentes):** trabajar por fases completas; no pedir permiso para comandos, instalaciones gratuitas, cambios de código, pruebas o correcciones rutinarias; decisiones técnicas menores con criterio propio documentando el motivo; ante un bloqueo real, seguir con las tareas independientes y dejar una instrucción concreta solo para el bloqueo; commits locales tras revisar los archivos y sin información sensible; **nunca `git push` sin autorización explícita**; sin operaciones destructivas ni borrado de archivos del usuario; sin desactivar Defender/firewall ni abrir puertos públicos; no cambiar configuración global sensible; UAC y reinicios los hace el usuario; no mantener el PC despierto; los respaldos `.zip`/`.bundle` de sesión quedan fuera de Git.
+
+**Si Ollama falla:** recuperación controlada (reintentos acotados, tareas pendientes preservadas, T1.4); **nunca** fallback de inferencia externo.

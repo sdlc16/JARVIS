@@ -1397,6 +1397,30 @@ class SpeechConfig:
 
 
 @dataclass(slots=True)
+class VoiceConfig:
+    """Voice conversation settings (``jarvis voice``, microphone + VAD).
+
+    Defaults are justified by measurements in JARVIS_PROGRESS.md; every
+    value can be overridden here (``[voice]`` in config.toml, or
+    ``jarvis config set voice.silence_timeout_ms 1800``) or per run with
+    the matching ``jarvis voice`` flag.
+    """
+
+    silence_timeout_ms: int = 1400  # final silence that closes the turn
+    no_speech_timeout_ms: int = 15000  # max wait for speech (0 = forever)
+    max_utterance_ms: int = 30000  # safety cap per turn
+    min_speech_ms: int = 250  # minimum voiced time to accept a turn
+    preroll_ms: int = 300  # audio kept before the detected onset
+    tail_ms: int = 300  # silence kept after the last voiced frame
+    aggressiveness: int = 2  # webrtcvad mode 0-3
+    energy_gate: bool = True  # require level above the adaptive noise floor
+    gate_margin_db: float = 6.0  # dB above the noise floor to count as voice
+    max_consecutive_failures: int = 3  # failed attempts before giving up
+    max_tokens: int = 200  # spoken answers: short by default
+    debug_audio_dir: str = ""  # opt-in: save each utterance WAV here (privacy!)
+
+
+@dataclass(slots=True)
 class OptimizeConfig:
     """Configuration optimization settings."""
 
@@ -1543,6 +1567,7 @@ class JarvisConfig:
     a2a: A2AConfig = field(default_factory=A2AConfig)
     operators: OperatorsConfig = field(default_factory=OperatorsConfig)
     speech: SpeechConfig = field(default_factory=SpeechConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     optimize: OptimizeConfig = field(default_factory=OptimizeConfig)
     agent_manager: AgentManagerConfig = field(default_factory=AgentManagerConfig)
     memory_files: MemoryFilesConfig = field(default_factory=MemoryFilesConfig)
@@ -1804,6 +1829,7 @@ def load_config(path: Optional[Path] = None) -> JarvisConfig:
             "a2a",
             "operators",
             "speech",
+            "voice",
             "optimize",
             "agent_manager",
             "digest",
@@ -2143,6 +2169,7 @@ __all__ = [
     "SignalChannelConfig",
     "SlackChannelConfig",
     "SpeechConfig",
+    "VoiceConfig",
     "StorageConfig",
     "TeamsChannelConfig",
     "TelegramChannelConfig",

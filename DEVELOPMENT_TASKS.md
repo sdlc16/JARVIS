@@ -6,6 +6,25 @@ Leyenda de responsable: **C** = Claude Code, **G** = Gemini/Antigravity, **U** =
 
 ---
 
+## Estado de implementación (actualizado 2026-11-20 — detalle y evidencias en `JARVIS_PROGRESS.md`)
+
+| Tarea | Estado | Evidencia |
+|---|---|---|
+| T0.1–T0.4 | Hecho | WSL2+Ubuntu, GPU RTX 4060 (no 3060), benchmark real, solo Ollama |
+| T1.1–T1.5 | Hecho | memoria+agente, config, T1.4 con caída real de Ollama (+bug corregido), puente mínimo 3/3 rondas |
+| T2.1 VAD | Hecho — validado con grabaciones controladas y ruta real; **falta validación con voz humana** | `tests/voice/` (78 pruebas), ver criterios ampliados abajo |
+| T2.4 STT→agente→TTS | Hecho (`jarvis voice`); latencia a validar con voz humana | primera prueba real del usuario OK |
+| T2.4b streaming TTS | Hecho (primer audio 0.6–0.9 s) | medido en `JARVIS_PROGRESS.md` |
+| T2.6 errores de reconocimiento | Hecho | transcripción vacía/sin voz/captura/STT/agente/TTS clasificados y reintentables |
+| T2.2, T2.3, T2.5 | Pendiente | wake-word, hotkey, barge-in |
+| T3.x, resto | Pendiente | |
+
+**Criterios de aceptación ampliados de T2.1/T2.6 (tras el fallo real de cierre de turno del 2026-11-20):** una pausa interna menor que `voice.silence_timeout_ms` (1400 ms por defecto, configurable) no parte la frase; la frase completa llega íntegra a faster-whisper (prueba con Whisper real sobre grabación controlada); el ruido ambiente medido (−62 dBFS) y las ráfagas no abren turnos falsos ni alargan la espera más allá de `no_speech_timeout_ms`; un micrófono mudo/bloqueado/ausente se diagnostica con causa; una transcripción vacía **no** cierra la sesión y se reintenta; las pruebas demuestran que pueden fallar (mutación).
+
+**Metodología de QA:** ver `CLAUDE.md` ("Metodología permanente de desarrollo y QA"). Comando único de validación: `jarvis test` (T2.7, ver abajo).
+
+---
+
 ## Fase 0 — Preparación de entorno (sin código)
 
 | ID | Tarea | Resp. | Depende de | Criterio de aceptación |
@@ -36,6 +55,7 @@ Leyenda de responsable: **C** = Claude Code, **G** = Gemini/Antigravity, **U** =
 | **T2.4b** | **Optimización condicional, no bloqueante:** streaming de TTS por frase (reutilizando el patrón de troceo de `cli/_voice_chat.py` de upstream — ver `PLAN_DE_REUTILIZACION.md` del paquete de investigación) para reducir la latencia percibida de T2.4. **Se intenta en V1, después de que T2.4 ya funcione de forma estable sin streaming.** Si su integración amenaza el calendario o la estabilidad del pipeline de voz, se retira de inmediato sin bloquear T2.4/T2.5/T3.8 y pasa a V2 — nunca al revés. | C | T2.4 (T2.4 debe estar ya estable antes de intentar esto) | Con streaming: la primera porción de la respuesta se escucha antes de que la respuesta completa termine de sintetizarse, sin cortar palabras entre fragmentos. Sin streaming (si se retira): T2.4 sigue funcionando exactamente igual que antes de intentar T2.4b — la retirada no puede dejar el pipeline roto. |
 | T2.5 | Barge-in: interrumpir TTS en reproducción al detectar nueva voz | C | T2.4 (no depende de T2.4b) | Hablar mientras JARVIS responde corta el audio en curso y empieza a escuchar la nueva instrucción. |
 | T2.6 | Gestión de errores de reconocimiento (reintento, pedir repetición) | G | T2.4 | Transcripción vacía o de baja confianza dispara una respuesta de "no te entendí" en vez de ejecutar una acción incorrecta. |
+| T2.7 | Comando único de validación `jarvis test` (análisis estático + suites relevantes + diagnóstico de entorno opcional) | C | T2.4 | Devuelve código de salida 0 solo si `ruff` y las suites de voz/voz-TTS/engine/tareas/CLI pasan; `--env` informa Ollama, GPU/VRAM, `parec`/`paplay` y fuentes de audio; no rompe los comandos existentes. |
 
 ## Fase 3 — Puente nativo de Windows
 

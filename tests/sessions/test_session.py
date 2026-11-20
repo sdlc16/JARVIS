@@ -88,12 +88,24 @@ class TestSessionStore:
         assert s1.session_id != s2.session_id
         store.close()
 
-    def test_decay(self, tmp_path):
-        store = self._make_store(tmp_path, max_age_hours=0.0001)
+    def test_decay(self, tmp_path, monkeypatch):
+        store = self._make_store(tmp_path, max_age_hours=0.0001)  # 0.36 s
         store.get_or_create("user1")
-        time.sleep(0.5)
+        # Reloj simulado en vez de time.sleep(0.5): el reloj de pared de WSL2
+        # da saltos hacia atras al resincronizarse con Windows (medido: -0.69 s
+        # dentro de un sleep(0.5), con el reloj monotonico perfecto), y con solo
+        # 0.14 s de margen el test fallaba de forma intermitente.
+        real_time = time.time
+        monkeypatch.setattr(time, "time", lambda: real_time() + 1.0)
         removed = store.decay()
         assert removed >= 1
+        store.close()
+
+    def test_decay_keeps_recent_sessions(self, tmp_path):
+        store = self._make_store(tmp_path, max_age_hours=24.0)
+        store.get_or_create("user1")
+        assert store.decay() == 0
+        assert len(store.list_sessions()) == 1
         store.close()
 
     def test_list_sessions(self, tmp_path):

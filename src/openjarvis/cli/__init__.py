@@ -36,6 +36,7 @@ from openjarvis.cli.registry_cmd import registry
 from openjarvis.cli.scan_cmd import scan
 from openjarvis.cli.scheduler_cmd import scheduler
 from openjarvis.cli.self_update_cmd import self_update
+from openjarvis.cli.selftest_cmd import selftest
 from openjarvis.cli.serve import serve
 from openjarvis.cli.skill_cmd import skill
 from openjarvis.cli.telemetry_cmd import telemetry
@@ -122,6 +123,7 @@ cli.add_command(digest, "digest")
 cli.add_command(deep_research_setup, "deep-research-setup")
 cli.add_command(deep_research_setup, "research")
 cli.add_command(self_update, "self-update")
+cli.add_command(selftest, "test")
 cli.add_command(bootstrap_cmd, "_bootstrap")
 
 # Gateway CLI commands (lazy import to avoid pulling starlette)

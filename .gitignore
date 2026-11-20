@@ -139,3 +139,5 @@ oj-debug.*.json
 # Session recovery export (not project source)
 jarvis-optimistic-bardeen-bdfwrm.bundle
 jarvis-optimistic-bardeen-bdfwrm.zip
+# Mismo artefacto visto desde Windows (':' mapeado a U+F03A por WSL)
+memory

@@ -2,6 +2,103 @@
 
 Memoria de trabajo entre sesiones. Léelo junto con `CLAUDE.md` al empezar cualquier sesión nueva, antes de tocar nada.
 
+## 🚧 Desarrollo integral de JARVIS (2026-11-21) — estado vivo (LEER PRIMERO)
+
+**Encargo:** completar JARVIS (voz con wake-word/barge-in, memoria, agente con herramientas, control de Windows, documentos, GUI, permisos/logs, estabilidad). Plan y estado por bloque (se actualiza al cerrar cada uno; "verificado" = con prueba real, no solo código):
+
+| Bloque | Estado | Evidencia |
+|---|---|---|
+| Cierre de turno de voz + QA + `jarvis test` | ✅ verificado | ver sección siguiente |
+| Fix de las 2 pruebas fallidas (causas raíz) | ✅ verificado | abajo |
+| **Puente de Windows real** (servidor autenticado, DPAPI, política, 22 acciones) | ✅ verificado en Windows real | `windows_bridge/selftest.py` 36/36 (4 ejecuciones seguidas sin fallo) + 46 pruebas lógicas con mutación |
+| Cliente WSL + 11 herramientas del agente con confirmación | ✅ verificado | 17 pruebas con HTTP real + `ToolExecutor`; llamada real WSL→Windows 35 ms |
+| Prompt/runtime JARVIS (anti-alucinación de herramientas), confirmaciones por voz/GUI | ⏳ en curso | el probe real con `qwen3:8b` mostró 1 de 3 respuestas alucinadas (inventó ventanas) |
+| Wake-word, barge-in, precarga de Ollama, `initial_prompt` Whisper | ⏳ pendiente | |
+| Memoria persistente administrable + documentos locales | ⏳ pendiente | |
+| GUI completa (chat, voz, permisos, historial, logs, ajustes) | ⏳ pendiente | |
+| Arranque con un clic, integración E2E, rendimiento, informe final | ⏳ pendiente | |
+
+### Causas raíz de las 2 pruebas fallidas de la suite completa (clasificación y fix)
+- `test_voice_section_is_loaded_from_toml` — **código del test (mío)**: `load_config` está decorada con `functools.lru_cache`, así que devuelve la configuración cacheada por *cualquier* test anterior del proceso e ignora `OPENJARVIS_CONFIG`; pasaba aislado (primera llamada) y fallaba en la suite completa. Reproducido por bisección (falla tras `tests/sdk`, `security`, `operators`, `sandbox`; no tras `core`/`prompt`/…). Fix: fixture que limpia la caché antes y después (también evita filtrar mi config a otros tests). Verificado en los 4 órdenes que fallaban.
+- `test_decay` — **entorno (WSL2)**: el reloj de pared saltó **hacia atrás −0.69 s dentro de un `sleep(0.5)`** (medido: monotónico 0.500–0.536 s, realtime min −0.6855 s en 60 muestras) al resincronizarse con Windows; el test comparaba `time.time()` con solo 0.14 s de margen. Fallaba justo en mis dos suites completas tras el reinicio. Fix: reloj simulado (sin `sleep`) + test nuevo de que no borra sesiones recientes; comprobado por mutación (con `decay` roto, falla).
+- **Baseline completo** (tras instalar `python-multipart` con `uv pip`, sin `uv sync` para no borrar la extensión Rust): 28 fallos / 6983 pasan, frente a 46 / 6677 al inicio; los 28 restantes son los preexistentes documentados (live/credenciales, gemma.cpp, pearl, cloud-dispatch, embedder de Ollama sin `nomic-embed-text`, hybrid) más estos 2 ya corregidos.
+- Basura que dejaban tests preexistentes en la raíz (`:memory:` de 0 bytes, `MagicMock/…`): eliminada la vacía y añadidos los patrones a `.gitignore`.
+
+### Puente de Windows — hallazgos reales (solo visibles con la prueba en Windows)
+1. **Alt rompe el tecleo en Notepad**: mi truco de "tocar Alt" para robar el foco activaba los *KeyTips* de WinUI (≈15 ventanas "Host de ventanas emergentes") y las teclas siguientes se interpretaban como atajos de menú. Corregido: tecla inerte F15; `list_windows` filtra la clase `Microsoft.UI.Content.PopupWindowSiteBridge`.
+2. **El autocorrector de Notepad (Windows 11) corrompe texto inyectado** (`rapido→rápido`, se traga espacios, rellena el resto con el último carácter) *incluso con ASCII puro*; sobre un destino neutro (tkinter) el texto llega **idéntico** (Unicode, `€`, saltos de línea). Ningún ritmo de tecleo lo arregla y no se tocan los ajustes de la app. Solución de producto: `input.type` **verifica por lectura** (UI Automation) lo escrito y devuelve `verified`; la herramienta del agente trata `verified=false` como fallo; y se añade `input.paste` (portapapeles + Ctrl+V, restaura el portapapeles del usuario) para texto exacto.
+3. **UI Automation funciona** y se integra: `ui.elements` (listar controles por nombre), `ui.invoke` (pulsar por nombre, sensible), `ui.read_text` (sensible).
+4. Seguridad verificada en real: token cifrado con DPAPI (266 bytes, no legible), solo escucha en la interfaz WSL (`172.29.48.1`), origen validado, `win+*` bloqueado, acciones sensibles exigen `confirmed`, raíces de archivos, papelera en vez de borrado, `system.lock` desactivado por defecto, registro sin token ni texto tecleado.
+5. Efectos secundarios de la prueba real: cada `selftest.py` deja 1 archivo `jarvis_selftest_recycle*.txt` en la Papelera (recuperable; vaciar a mano si molesta; no se purga automáticamente por ser borrado permanente).
+
+## ✅ QA autónomo + corrección del cierre de turno de voz — COMPLETADO salvo validación física
+
+Tarea iniciada 2026-11-20, interrumpida por el apagado del PC y **retomada y verificada de nuevo desde cero** (se comprobó con `git status` que todo estaba guardado y se re-ejecutó todo lo que había quedado "sin verificar"). Resultados de la reanudación al final de esta sección ("Verificación tras la reanudación"). Nada pusheado. **Única validación pendiente: tu voz real en el micrófono** (instrucciones abajo).
+
+### Origen del trabajo
+Segunda prueba real con voz del usuario: la frase *"Hola, Jarvis. ¿Cómo estás? Quiero que me expliques brevemente qué puedes hacer por mí y cómo puedes ayudarme a controlar mi computadora."* se cortó a mitad y terminó en `No se entendió nada (transcripción vacía)`, con `Se corta tras ~500ms de silencio`. El usuario pidió además una metodología QA permanente (ya integrada en `CLAUDE.md`).
+
+### Causas raíz encontradas (reproducidas con evidencia, no supuestas)
+1. **Silencio final de 500 ms** cortaba en la primera pausa natural: con la frase real (voz sintética + ruido real) capturó el **9 %** de la voz (0.81 s de 9.28 s), incluso con pausas de 0.3 s.
+2. **`aggressiveness=3`**: recall de voz 99 % a −20 dBFS → 80 % a −40 → **16 % a −50 dBFS** (micro con poca ganancia ⇒ voz perdida) y onset retrasado ~1.2 s (primera sílaba perdida). `aggr` 0–2 sin compuerta marcaban el **52–69 %** del ruido ambiente real (−62 dBFS) como habla.
+3. **Ceros de arranque**: los primeros ~0.4 s de cada captura `parec`/WSLg son silencio digital (−98 dBFS): se perdían palabras dichas en ese instante y el suelo de ruido adaptativo quedaba envenenado (−80 dB ⇒ compuerta inútil).
+4. Sin pre-roll; onset con **un solo frame**; **bucle activo infinito** si el flujo de audio terminaba; ruido a ráfagas alargaba la espera por encima de `no_speech_timeout` (turno sin hablar: 9.5 s con límite 6 s).
+5. Un turno vacío **consumía** el único turno de `--turns 1` y la sesión terminaba sin respuesta.
+6. (Test de entorno) `parec` sin `--latency-msec`: en fuentes tipo *monitor* PulseAudio entrega bloques de ~2 s ⇒ stalls intermitentes de captura. Corregido con `--latency-msec=60`.
+
+### HECHO y verificado (sin commit)
+- **VAD rediseñado** ([vad.py](src/openjarvis/voice/vad.py)): compuerta de energía adaptativa (suelo de ruido + 6 dB, ignora frames muertos, requiere calibración ≥10 frames), histéresis de inicio (3 de 5), pre-roll 300 ms, cola 300 ms, silencio final **1400 ms** configurable, `EndReason` (silence / max_duration / no_speech_timeout / capture_ended), `VadStats` (pausas internas, niveles, ratio de voz, frames muertos, ráfagas descartadas), validación de ráfagas de ruido también en el tope y en el plazo de espera. Defaults medidos: aggr 2 + compuerta 6 dB (barrido 6/8/10 dB × −25…−50 dBFS × pausas 0.4…1.5 s: con 8–10 dB la voz suave perdía bordes y la frase se partía).
+- **Captura** ([audio_io.py](src/openjarvis/voice/audio_io.py)): `MicStream` (espera a la primera señal viva, descarta ceros de arranque, `CaptureError` si `parec` falta/muere/se bloquea, `--latency-msec`), `audio_levels`, `PlaybackError`.
+- **Pipeline** ([pipeline.py](src/openjarvis/voice/pipeline.py)): cada turno termina en `TurnOutcome` (ok / no_speech / empty_transcript / capture_error / stt_error / agent_error / tts_error), con causa probable, sugerencia si una pausa rozó el límite, guardia anti-alucinación de Whisper, métrica de huecos entre frases del streaming, log JSONL sin texto privado (`~/.openjarvis/logs/voice.jsonl`), audio de depuración **opt-in** (`--debug-audio-dir`, últimos 10).
+- **Sesión** ([session.py](src/openjarvis/voice/session.py)): reintenta fallos sin cerrar; solo cuentan turnos completados; se rinde tras `max_consecutive_failures` (3) con motivo; Ctrl+C limpio.
+- **Config `[voice]`** ([config.py](src/openjarvis/core/config.py), `VoiceConfig`) + flags `--silence-ms --max-wait-s --max-failures --vad-aggressiveness --debug-audio-dir`; `jarvis config set voice.silence_timeout_ms 1800` funciona (probado).
+- **Pruebas `tests/voice/`: 78 pasan** (VAD, pausas 0.3–1.1 s, voz suave, silencio, ruido −62/−50/−40 dBFS, ráfagas, mic mudo, captura cortada, tope; `audio_io` con procesos reales sustitutos; pipeline: vacío/captura/STT/Ollama/Kokoro/reproducción, varios fragmentos, varios turnos, recuperación tras vacío; **faster-whisper real** sobre grabación controlada: la frase completa llega íntegra a Whisper). Fixtures: voz **sintética** Kokoro en `tests/voice/fixtures/` (regenerables con `generate_fixtures.py`).
+- **Comprobación por mutación** (las pruebas pueden fallar): reintroduciendo 500 ms + sin compuerta fallan **14** pruebas (la de Whisper real devuelve solo `'hola harbys'`, el síntoma del usuario); desactivando las correcciones de ráfagas fallan las 2 pruebas nuevas. Código restaurado después.
+- **Entorno real (hardware/ruta real, audio sintético):** sumidero virtual PulseAudio temporal (`null-sink`, descargado al terminar) con cama de ruido −62 dBFS: **5/5 casos correctos** (frase completa con pausas 0.5/1.0 s y con voz suave −45 dBFS transcrita íntegra, frase corta, solo ruido ⇒ `no_speech` con causa). Micrófono real: arranque 0.42 s (descarta 6 frames de ceros), 0.06 s en el 2.º turno; suelo −64/−66 dBFS.
+- **Docs:** `CLAUDE.md` (metodología QA permanente, hardware RTX 4060, estado "implementación autorizada") y `DEVELOPMENT_TASKS.md` (tabla de estado, criterios ampliados T2.1/T2.6, nueva T2.7) actualizados.
+- `tests/conftest.py`: fixture autouse que fija `OPENJARVIS_NO_UPDATE_CHECK=1` (arregla los 9 tests que fallaban solo en local por el aviso de actualización contaminando `--json`). **Aún no verificado** con la suite (ver pendiente).
+- `jarvis test` ([selftest_cmd.py](src/openjarvis/cli/selftest_cmd.py), registrado como `test`): ruff + suites `quick|voice|full`, `--env` diagnostica Ollama/GPU/audio, código de salida correcto. Tests en `tests/cli/test_selftest_cmd.py`. **Escrito pero su primera ejecución completa fue interrumpida** (la detuve al apagar el PC).
+
+### Verificación tras la reanudación (2026-11-21, resultados reales)
+- **Estado tras el reinicio:** WSL2, Ollama (`systemctl` active), GPU RTX 4060 y fuentes de audio (RDPSource/RDPSink) OK; todos los ficheros del trabajo anterior estaban guardados.
+- **`jarvis test --suite full --env`** (comando nuevo, probado de verdad): 1.ª ejecución → `ruff` FALLÓ con 20 líneas largas (E501) en mis ficheros nuevos y el comando lo detectó y salió con código 1 (comportamiento correcto) · pytest **479 passed** (voz 78 + speech/TTS + device_selection + engine/ollama + degradation T1.4 + tasks + cli ask/doctor/telemetry/version_check + telemetry; incluye los 9 tests que antes fallaban por el aviso de actualización: **fix de `conftest.py` verificado**). Corregido (`ruff format` + 3 cadenas largas a mano) → 2.ª ejecución: ruff limpio, **479 passed, código de salida 0**.
+- **Streaming de Kokoro + VRAM + interferencia con Ollama (entorno real: Kokoro/Whisper/Ollama/altavoces reales, `results/voice_verify_perf.py`):**
+
+| Medida | Resultado |
+|---|---|
+| VRAM base (sin Ollama) | 797 MiB |
+| VRAM tras cargar STT+TTS (CPU) | 786 MiB → **no sube** |
+| VRAM con `qwen3:8b` cargado (`ollama ps`: 5.77 GiB) | 6821 MiB de 8188 (≈1.3 GiB libres) |
+| RAM del proceso (STT+TTS cargados / tras hablar) | 1165 MB / 1487 MB |
+| Carga de modelos (una vez por sesión) | STT 0.51 s + TTS 25.25 s |
+| Streaming, respuesta corta (2 frases) | primer audio **1.08 s**, 2 trozos, **0 huecos** |
+| Streaming, respuesta larga (4 frases) | primer audio **1.38 s**, 4 trozos, **0 huecos** (síntesis por frase 1.4/1.7/3.9/1.8 s; cada una llega antes de que acabe de sonar la anterior) |
+| Ollama solo, 1.ª llamada (carga del modelo) | **10.67 s** · 2.ª llamada 0.29 s |
+| Ollama con síntesis TTS simultánea (estrés sintético) | 0.75 s vs 0.29 s solo (+0.46 s; en el flujo real el TTS empieza cuando el agente ya terminó, no se solapan) |
+
+- **Ruta real con audio sintético controlado** (sumidero virtual PulseAudio, 5/5 casos; ver sección anterior) y **micrófono real** (arranque 0.42 s, descarta ceros de arranque, suelo −64/−66 dBFS) ya verificados antes del apagado; no se repitieron por no haber cambiado el código de captura desde entonces.
+
+### Pendiente real (nada de esto bloquea el cierre de la corrección de voz)
+1. **Validación física con tu voz** (única, instrucciones abajo).
+2. Mejora recomendada, no implementada: **precargar `qwen3:8b` al iniciar la sesión de voz** (la primera respuesta del agente tarda ~10.7 s porque Ollama descarga el modelo tras 5 min inactivo; es el mayor contribuyente a la latencia del primer turno). Requiere decidir `keep_alive` (VRAM residente 5.8 GiB mientras dure).
+3. Mejora recomendada: `initial_prompt` de Whisper con el vocabulario ("Jarvis") — hoy transcribe "Harbys".
+4. Re-medir la suite completa del repositorio (ver más abajo si ya está anotada).
+
+### Errores/limitaciones conocidos a recordar
+- Whisper transcribe "Jarvis" como "Harbys/Garbis" (también con voz sintética): mejora pendiente = `initial_prompt` con el vocabulario (nombre del asistente) en `FasterWhisperBackend`; será clave para wake-word.
+- `agente` en caliente tarda 6–8 s con `qwen3:8b` (incluye recarga si Ollama descargó el modelo tras 5 min): pendiente precargar con `keep_alive` al iniciar la sesión (no se hizo; afecta a VRAM residente).
+- La prueba de bucle acústico altavoz→micrófono no es concluyente: el micro apenas capta los altavoces (probablemente auriculares).
+- Pausas nominales ≥ ~1.3 s parten el turno por diseño (silencio final 1.4 s); subir `voice.silence_timeout_ms` si el usuario pausa más.
+- Pre-existentes (no relacionados, documentados antes): extras sin instalar (`server`, `framework-comparison`, gemma.cpp, pearl), tests "live" sin credenciales, embedder de Ollama sin `nomic-embed-text`.
+
+### Borrador de instrucciones para la prueba con micrófono real (una sola sesión)
+1. En WSL2, dentro del proyecto: `uv run jarvis voice --turns 2 --debug-audio-dir ~/jarvis-audio-debug`
+2. Espera a ver `Habla ahora...` (antes de eso el micro aún arranca) y di la frase completa, con tus pausas naturales. Espera a la respuesta hablada.
+3. Segundo turno: una frase corta ("¿qué hora es?").
+4. Copia/pega la salida de consola (trae causa, niveles y tiempos). Luego borra `~/jarvis-audio-debug` (es tu voz).
+
+(Si te corta frases: `--silence-ms 1800`. Si dice que no oye voz: sube el volumen de entrada del micro en Windows.)
+
 ## Sesión 2026-11-20 (continuación) — Fase 2: pipeline de voz real (T2.1-T2.4 implementados, falta validar con voz del usuario)
 
 **Resumen ejecutivo:** JARVIS ya puede escuchar (VAD+micrófono real vía WSLg), transcribir (faster-whisper), razonar (agente + Ollama, reutilizado sin cambios) y hablar (Kokoro TTS, español) en un solo flujo: `jarvis voice`. Todos los componentes se probaron con audio real (no mocks), con medición de latencia real. **No se da por validado el reconocimiento de voz real del usuario** — eso requiere que el usuario hable al micrófono, pendiente de su intervención física (ver instrucción al final). El modo texto (`jarvis ask`/`jarvis chat`) sigue intacto como alternativa.

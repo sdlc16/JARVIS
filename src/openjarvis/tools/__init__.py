@@ -13,6 +13,11 @@ except ImportError:
     pass
 
 try:
+    import openjarvis.tools.windows_tools  # noqa: F401
+except ImportError:
+    pass
+
+try:
     import openjarvis.tools.think  # noqa: F401
 except ImportError:
     pass
