@@ -19,9 +19,21 @@ class KokoroTTSBackend(TTSBackend):
 
     backend_id = "kokoro"
 
-    def __init__(self, *, model_path: str = "", device: str = "auto") -> None:
+    # Voces conocidas por idioma (codigo Kokoro -> lista de voice_id).
+    # "e" = espanol. Kokoro no distingue variante latam/Espana dentro de
+    # un mismo codigo de idioma -- ver JARVIS_PROGRESS.md T2.4 para la
+    # evaluacion real de como suena cada una.
+    _VOICES_BY_LANG = {
+        "a": ["af_heart", "af_bella", "am_adam", "am_michael"],
+        "e": ["ef_dora", "em_alex", "em_santa"],
+    }
+
+    def __init__(
+        self, *, model_path: str = "", device: str = "auto", lang_code: str = "a"
+    ) -> None:
         self._model_path = model_path
         self._device = device
+        self._lang_code = lang_code
         self._pipeline = None
 
     def _ensure_pipeline(self) -> None:
@@ -30,7 +42,7 @@ class KokoroTTSBackend(TTSBackend):
         try:
             from kokoro import KPipeline
 
-            self._pipeline = KPipeline(lang_code="a")
+            self._pipeline = KPipeline(lang_code=self._lang_code)
         except ImportError:
             raise RuntimeError(
                 "kokoro package not installed. Install with: pip install kokoro"
@@ -40,10 +52,12 @@ class KokoroTTSBackend(TTSBackend):
         self,
         text: str,
         *,
-        voice_id: str = "af_heart",
+        voice_id: str = "",
         speed: float = 1.0,
         output_format: str = "wav",
     ) -> TTSResult:
+        if not voice_id:
+            voice_id = self._VOICES_BY_LANG.get(self._lang_code, ["af_heart"])[0]
         self._ensure_pipeline()
         import numpy as np
         import soundfile as sf
@@ -70,7 +84,7 @@ class KokoroTTSBackend(TTSBackend):
         )
 
     def available_voices(self) -> List[str]:
-        return ["af_heart", "af_bella", "am_adam", "am_michael"]
+        return self._VOICES_BY_LANG.get(self._lang_code, ["af_heart"])
 
     def health(self) -> bool:
         try:

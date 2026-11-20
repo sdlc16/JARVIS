@@ -2,7 +2,76 @@
 
 Memoria de trabajo entre sesiones. Léelo junto con `CLAUDE.md` al empezar cualquier sesión nueva, antes de tocar nada.
 
-## Sesión de instalación en PC real (2026-11-19/20) — primera versión funcional de JARVIS
+## Sesión 2026-11-20 (continuación) — Fase 2: pipeline de voz real (T2.1-T2.4 implementados, falta validar con voz del usuario)
+
+**Resumen ejecutivo:** JARVIS ya puede escuchar (VAD+micrófono real vía WSLg), transcribir (faster-whisper), razonar (agente + Ollama, reutilizado sin cambios) y hablar (Kokoro TTS, español) en un solo flujo: `jarvis voice`. Todos los componentes se probaron con audio real (no mocks), con medición de latencia real. **No se da por validado el reconocimiento de voz real del usuario** — eso requiere que el usuario hable al micrófono, pendiente de su intervención física (ver instrucción al final). El modo texto (`jarvis ask`/`jarvis chat`) sigue intacto como alternativa.
+
+### Dependencias instaladas (`uv sync --extra speech`)
+
+`faster-whisper`, `kokoro` (+ `misaki`, `spacy`, `espeakng-loader`), `webrtcvad`, `soundfile`, y **torch como dependencia transitiva de kokoro — fijado a la rueda CPU-only** (`torch==2.10.0+cpu`, vía `[tool.uv.sources]`/`[[tool.uv.index]]` en `pyproject.toml`, índice `https://download.pytorch.org/whl/cpu`) para no descargar ~3GB de runtime CUDA duplicado y mantener la RTX 4060 (8GB) reservada en exclusiva para Ollama, tal como pidió el usuario ("evita cargar simultáneamente modelos innecesarios en VRAM"). También se instaló `pulseaudio-utils`/`alsa-utils`/`python3.12-dev`/`build-essential` en WSL2 (headers necesarios para compilar la extensión C de `webrtcvad`).
+
+**Hallazgo operativo importante:** cada `uv sync` (incluido este) **reinstala el paquete base y borra la extensión Rust compilada con maturin** (`openjarvis_rust` deja de ser importable). Hay que reconstruirla después de cada `uv sync`: `uv run maturin develop -m rust/crates/openjarvis-python/Cargo.toml` (recuerda sourcear tambien `$HOME/.cargo/env`, no solo `$HOME/.local/bin/env`). Confirmado con `jarvis doctor` (8/8 checks relevantes en verde) tras reconstruir.
+
+### Código nuevo (reutiliza lo existente, no reconstruye nada — ver CLAUDE.md)
+
+- [`src/openjarvis/voice/audio_io.py`](src/openjarvis/voice/audio_io.py): captura (`parec`) y reproducción (`paplay`) reales vía el PulseAudio de WSLg confirmado en la sesión anterior (`RDPSource`/`RDPSink`), más `pcm_to_wav_bytes()` (envuelve PCM crudo en WAV valido para los backends STT).
+- [`src/openjarvis/voice/vad.py`](src/openjarvis/voice/vad.py) (T2.1): `VoiceActivityDetector` sobre `webrtcvad` (elegido sobre `silero-vad` por ser una extensión C sin modelo que descargar — decisión documentada en el código, reversible) y `segment_utterance()`, que espera el inicio del habla y corta tras `silence_timeout_ms` (500ms por defecto, criterio T2.1) de silencio continuo, descartando ruido puntual (`min_speech_ms`).
+- [`src/openjarvis/voice/pipeline.py`](src/openjarvis/voice/pipeline.py) (T2.4): `VoicePipeline` conecta VAD → `SpeechRegistry["faster-whisper"]` → **el mismo `_run_agent()` que usa `jarvis ask`** (reutilizado, no reimplementado — incluye seguridad, herramientas, memoria) → `TTSRegistry["kokoro"]` → reproducción, con medición de latencia por etapa (`TurnLatency`).
+- [`src/openjarvis/cli/voice_cmd.py`](src/openjarvis/cli/voice_cmd.py): nuevo comando `jarvis voice` (sigue el patrón Click de `ask`/`chat`), con `--turns N` (0 = continuo, preparación para conversación continua T2.5) y opciones de modelo/motor/agente/VAD.
+- [`src/openjarvis/speech/kokoro_tts.py`](src/openjarvis/speech/kokoro_tts.py): ampliado (no reescrito) para aceptar `lang_code` (antes fijo a inglés `"a"`) y exponer voces por idioma — necesario para "español latam, voz masculina" (T2.4). Voces españolas de Kokoro: `em_alex`/`em_santa` (masculinas), `ef_dora` (femenina) — Kokoro no distingue variante latam/España dentro del código "e", es lo más cercano disponible localmente.
+- Fix de test: `tests/speech/test_tts_backends.py::test_kokoro_health_false_without_package` asumía que `kokoro` nunca estaría instalado en el entorno; ahora que lo instalamos a propósito como backend designado, se corrigió para simular el `ImportError` explícitamente (`patch.dict("sys.modules", {"kokoro": None})`) en vez de depender del estado ambiental. **29/29 tests de `tests/speech` pasan.**
+
+### Mediciones reales (no supuestas — ver CLAUDE.md "medir, no asumir")
+
+**VAD — falsos positivos sobre ruido ambiente real de esta sala**, 1s de audio real capturado del micrófono en silencio/ambiente normal:
+
+| `aggressiveness` | Frames marcados "habla" (de 33) |
+|---|---|
+| 0 | 23 (70%) |
+| 1 | 25 (76%) |
+| 2 (valor por defecto anterior) | 28 (85%) |
+| **3 (nuevo valor por defecto)** | **5 (15%)** |
+
+Con esto, `aggressiveness=2` (el valor "razonable" que se habría asumido sin medir) hubiera disparado falsos inicios de turno constantemente. Cambiado el default a `3` en `VadConfig` y en `jarvis voice --vad-aggressiveness`, documentado en el propio código como medición específica de este equipo/ambiente, no un valor universal.
+
+**STT (faster-whisper, CPU, int8) — latencia estable tras la primera carga**, sobre un clip real de 1.83s:
+
+| Modelo | Carga + 1ª transcripción | Transcripción en caliente |
+|---|---|---|
+| `tiny` | 1.57s | **0.95s** |
+| `base` (por defecto) | 2.17s | **1.49s** |
+| `small` | 4.54s | 5.19s (más lento que tiempo real — no recomendado) |
+
+La primera transcripción de la sesión con un modelo que nunca se había usado en esta máquina puede tardar bastante más (hasta 7-11s vistos en la primera prueba) porque incluye la descarga/compilación de los pesos CTranslate2 — es un coste único por modelo, no por turno. `base` queda como valor por defecto (buen equilibrio latencia/calidad); `tiny` disponible via `--stt-model tiny` si se prioriza latencia.
+
+**TTS (Kokoro, español, voz `em_alex`) — mismo patrón de arranque en frío vs. caliente:**
+
+| Llamada | Latencia | Duración del audio generado |
+|---|---|---|
+| 1ª vez en la máquina (descarga del modelo ~82M params) | 40.5s | 4.6s |
+| 1ª vez en un proceso nuevo (modelo ya cacheado en disco, pero no en memoria) | 23.8s | 3.7s |
+| **2ª síntesis en el mismo proceso (modelo ya en memoria)** | **0.68s** | 2.1s |
+
+**Conclusión de arquitectura:** los modelos STT/TTS deben cargarse UNA vez al iniciar `jarvis voice` (ya es así — `VoicePipeline` los carga en `__init__`, no por turno), no por cada turno. El primer turno de cada sesión de `jarvis voice` será notablemente más lento (carga de modelos); los turnos siguientes deberían rondar STT ~1-1.5s + TTS <1s, dejando el grueso de la latencia percibida al propio Ollama (medido en T0.3: ~45-58 tok/s con `qwen3:8b`).
+
+**Pipeline completo:** validado end-to-end a nivel de componentes (STT sobre audio real capturado, TTS con reproducción real audible por `RDPSink`, VAD sobre frames reales) — `ruff` limpio, `29/29` tests de voz/TTS en verde. **No se ejecutó todavía `pipeline.run_turn()` completo con habla real del usuario** (el VAD de la prueba de audio ambiente, sin hablar, dio pie a transcripciones alucinadas por Whisper al no estar filtrado por VAD en esas pruebas puntuales de componentes — comportamiento conocido de Whisper ante silencio/ruido, no un bug; en el flujo real `run_turn()` el VAD sí filtra antes de llegar al STT).
+
+### Pendiente — requiere intervención física del usuario
+
+**Instrucción concreta:** ejecutar en una terminal de WSL2 (dentro del proyecto):
+
+```
+uv run jarvis voice --turns 1
+```
+
+y hablar una frase simple al micrófono cuando el programa diga "Escuchando...". Esto es lo único que esta sesión no puede validar por sí misma (no hay forma de hacer que el usuario hable de forma sincronizada con una llamada de herramienta). Con ese resultado real se podrá: (a) confirmar que el VAD corta el turno correctamente con voz real (no solo ruido ambiente), (b) revisar si la transcripción de faster-whisper es precisa en español latam real del usuario, (c) escuchar si la voz `em_alex` de Kokoro suena natural o conviene probar `em_santa`/ajustar velocidad, y (d) medir la latencia total percibida real de un turno completo.
+
+### Pendiente — trabajo independiente que continúa sin bloquear lo anterior
+
+- T2.2 (wake-word "Hey Jarvis", openWakeWord): arquitectura dejada lista para enchufar (el bucle de `jarvis voice --turns 0` ya es la base de "conversación continua"; falta añadir la detección de wake-word antes de activar el VAD) — **no implementado todavía a propósito**, es su propia tarea y openWakeWord es un modelo adicional que hay que justificar antes de instalar (regla del usuario: "no instales múltiples modelos pesados sin justificar su utilidad").
+- T2.3 (hotkey global): no implementado esta sesión.
+- T2.5 (barge-in, interrumpir TTS al detectar nueva voz): no implementado — `jarvis voice` actualmente reproduce la respuesta de forma bloqueante.
+- T2.6 (gestión de errores de reconocimiento): parcialmente cubierto (`jarvis voice` ya informa "No se entendió nada" si la transcripción viene vacía), falta manejar baja confianza explícitamente.
 
 **Continuación de la sesión de instalación de abajo, tras el reinicio de Windows.** Resumen ejecutivo: JARVIS tiene ahora una primera versión funcional corriendo sobre el hardware real del usuario — WSL2 + Ubuntu 24.04 + Ollama + OpenJarvis, con GPU real, memoria real, y el mecanismo de degradación de T1.4 validado con una caída real de Ollama (que además reveló y corrigió un bug real). Nada se commiteó ni se pusheó — Git sigue sin identidad de autor configurada, exactamente como se pidió.
 

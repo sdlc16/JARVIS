@@ -75,8 +75,12 @@ def test_kokoro_health_false_without_package():
     from openjarvis.speech.kokoro_tts import KokoroTTSBackend
 
     backend = KokoroTTSBackend()
-    # Without kokoro installed, health returns False
-    assert backend.health() is False
+    # Simula el paquete `kokoro` ausente (import error), sin depender de si
+    # esta realmente instalado en el entorno -- JARVIS lo instala por
+    # defecto como backend de TTS designado (ver CLAUDE.md), asi que no se
+    # puede asumir su ausencia como en versiones anteriores de este test.
+    with patch.dict("sys.modules", {"kokoro": None}):
+        assert backend.health() is False
 
 
 # ---------------------------------------------------------------------------

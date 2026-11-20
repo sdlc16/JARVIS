@@ -114,7 +114,13 @@ security-signing = ["cryptography>=43"]
 sandbox-wasm = ["wasmtime>=25"]
 sandbox-docker = ["docker>=7.0"]
 dashboard = ["textual>=0.80"]
-speech = ["faster-whisper>=1.0"]
+speech = [
+    "faster-whisper>=1.0",
+    "kokoro>=0.7.16",
+    "soundfile>=0.12",
+    "webrtcvad>=2.0.10",
+    "numpy>=1.24",
+]
 speech-deepgram = ["deepgram-sdk>=3.0"]
 eval-wandb = ["wandb>=0.17"]
 eval-sheets = ["gspread>=6.0", "google-auth>=2.0"]
@@ -136,6 +142,19 @@ docs = [
     "mkdocs-gen-files>=0.5",
     "mkdocs-literate-nav>=0.6",
 ]
+
+[tool.uv.sources]
+# Kokoro (TTS) tira de torch como dependencia transitiva. Lo fijamos a la
+# rueda CPU-only de PyTorch: Kokoro es un modelo pequeno (TTS), no necesita
+# GPU, y asi no se descargan ~3GB de runtime CUDA duplicado -- la RTX 4060
+# de 8GB queda reservada en exclusiva para Ollama (ver CLAUDE.md, regla de
+# "evitar cargar simultaneamente modelos innecesarios en VRAM").
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.urls]
 Homepage = "https://github.com/open-jarvis/OpenJarvis"
