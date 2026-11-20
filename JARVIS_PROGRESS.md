@@ -56,15 +56,45 @@ La primera transcripción de la sesión con un modelo que nunca se había usado 
 
 **Pipeline completo:** validado end-to-end a nivel de componentes (STT sobre audio real capturado, TTS con reproducción real audible por `RDPSink`, VAD sobre frames reales) — `ruff` limpio, `29/29` tests de voz/TTS en verde. **No se ejecutó todavía `pipeline.run_turn()` completo con habla real del usuario** (el VAD de la prueba de audio ambiente, sin hablar, dio pie a transcripciones alucinadas por Whisper al no estar filtrado por VAD en esas pruebas puntuales de componentes — comportamiento conocido de Whisper ante silencio/ruido, no un bug; en el flujo real `run_turn()` el VAD sí filtra antes de llegar al STT).
 
-### Pendiente — requiere intervención física del usuario
+### Primera validación real del usuario (2026-11-20) + optimización de latencia
 
-**Instrucción concreta:** ejecutar en una terminal de WSL2 (dentro del proyecto):
+El usuario ejecutó `jarvis voice --turns 1` y habló al micrófono: **funcionó de extremo a extremo** (escuchó, transcribió, generó respuesta, la reprodujo). Latencia reportada en esa primera prueba real: **54.94s total** (VAD 8.07s, STT 1.27s, agente 1.94s, **TTS+audio 43.66s**). Se investigó y optimizó cada punto, con medición real antes/después (no se da nada por optimizado sin medirlo, igual que con el reconocimiento):
 
-```
-uv run jarvis voice --turns 1
-```
+**1-2. Desglose real de dónde se iba el tiempo** (instrumentación nueva en `kokoro_tts.py` y `vad.py`, expuesta en `TurnLatency`):
+- **TTS (43.66s) era casi todo carga del modelo en memoria, no síntesis real**: con el pipeline recién arrancado en un proceso nuevo, Kokoro tarda ~23-29s en cargarse la PRIMERA vez que se usa — exactamente el patrón "frío vs caliente" ya documentado antes, pero ahora cayendo dentro del único turno de la prueba (`--turns 1`) en vez de quedar oculto.
+- **VAD (8.07s) no es overhead de cómputo**: es, casi en su totalidad, el tiempo real que el usuario tardó en reaccionar y empezar a hablar tras ver "Escuchando..." más la duración real de su frase — comportamiento esperado de un asistente de voz, no un cuello de botella que optimizar. Ahora `vad.py` desglosa esto en `wait_for_speech_seconds` (reacción) / `speech_seconds` (habla real) / `trailing_silence_seconds` (los 500ms de corte) para que esto sea transparente en vez de parecer "lentitud".
 
-y hablar una frase simple al micrófono cuando el programa diga "Escuchando...". Esto es lo único que esta sesión no puede validar por sí misma (no hay forma de hacer que el usuario hable de forma sincronizada con una llamada de herramienta). Con ese resultado real se podrá: (a) confirmar que el VAD corta el turno correctamente con voz real (no solo ruido ambiente), (b) revisar si la transcripción de faster-whisper es precisa en español latam real del usuario, (c) escuchar si la voz `em_alex` de Kokoro suena natural o conviene probar `em_santa`/ajustar velocidad, y (d) medir la latencia total percibida real de un turno completo.
+**3. Modelos residentes durante la sesión — ya era así, ahora además con arranque explícito:** `VoicePipeline` ya cargaba los modelos una sola vez por proceso (no por turno); el problema real era que esa carga ocurría *dentro* del primer turno. Se añadió `_warm_up()` en `VoicePipeline.__init__`: ahora los modelos se cargan explícitamente ANTES de empezar a escuchar, con su propio mensaje ("Cargando modelos de voz... Modelos listos en Xs") — así el coste de arranque se ve y se paga una sola vez por sesión, nunca dentro de la latencia de un turno.
+
+**4. Streaming de TTS real implementado** ([`kokoro_tts.py`](src/openjarvis/speech/kokoro_tts.py) `synthesize_stream()`, [`audio_io.py`](src/openjarvis/voice/audio_io.py) `play_pcm_stream()`): Kokoro por defecto solo trocea el texto en saltos de línea (`split_pattern='\n+'`) — una respuesta de una sola línea salía como UN solo bloque de audio, sin beneficio real de streaming (medido: con una frase de 3 oraciones sin `\n`, "tiempo hasta primer audio" == tiempo total, 4.34s). Se fuerza el troceo por oración (`split_pattern=r'(?<=[.!?])\s+'`): ahora Kokoro sintetiza y entrega audio frase por frase, y `play_pcm_stream` empieza a reproducir la primera frase mientras la siguiente aún se está sintetizando.
+
+**5. Respuestas más breves por defecto:** `max_tokens` en modo voz baja de 512 a **200** por defecto (`DEFAULT_VOICE_MAX_TOKENS`, configurable con `jarvis voice --max-tokens`), y se añade una instrucción de estilo (`VOICE_STYLE_HINT`, "responde breve, natural y directo, 1-3 frases; amplía si te lo piden explícitamente") que se antepone al texto transcrito antes de llegar al agente.
+
+**6. VRAM/Ollama — verificado con medición real, no supuesto:** con Ollama **sin** ningún modelo cargado, `nvidia-smi` marcaba 1104 MiB (overhead base de Windows/driver). Tras forzar una generación real de Ollama (`qwen3:8b`, confirmado cargado via `ollama ps`: `size_vram=6194766806` bytes), `nvidia-smi` subió a **7383 MiB** — coincide con el benchmark de T0.3 (~7.2GB), sin ningún overhead extra atribuible al STT/TTS (que corren explícitamente en `device="cpu"`, nunca tocan CUDA).
+
+**7. Comparativa frío vs. caliente (medición real, mismo proceso)**, con el streaming por frase ya activo:
+
+| Medición | Antes de optimizar (reportado por el usuario) | Después (medido) |
+|---|---|---|
+| Arranque de modelos (una vez por sesión) | oculto dentro del turno 1 | explícito: STT 0.51s + TTS 29.38s = ~30s, mostrado como "Cargando modelos..." antes de escuchar |
+| TTS, frase larga (3 oraciones) — tiempo hasta el primer audio | 43.66s (bloque único) | **0.90s** (3 trozos) |
+| TTS, frase larga — tiempo total (audio completo) | 43.66s | 17.18s (incluye reproducir ~12s de audio real) |
+| TTS, respuesta típica corta (1-3 frases) — primer audio | — (no medido así antes) | **0.61-0.73s** |
+| STT en caliente | 1.27s | 1.82-3.10s (ruido de medición, mismo orden de magnitud que antes) |
+| Agente (Ollama, qwen3:8b) | 1.94s | 6.46-7.76s (respuesta algo más larga en esta prueba; sigue siendo Ollama, no cambiado) |
+
+**Conclusión:** la latencia "hasta que Jarvis empieza a hablar" tras una respuesta normal de 1-3 frases ronda ahora **~0.6-0.9s** de TTS (antes: tenía que esperar los 40+ segundos completos), una vez pagado el arranque único de ~30s al principio de la sesión. El arranque en frío sigue siendo real y no se puede eliminar sin perder calidad (es el coste de cargar los pesos del modelo), pero ya no se repite por turno y ahora es visible/transparente para el usuario en vez de confundirse con latencia de conversación.
+
+### Validación real con el usuario — estado
+
+✅ **Primera validación completada** (ver arriba): el flujo completo (escuchar→transcribir→responder→hablar) funciona de extremo a extremo con voz real del usuario.
+
+**Pendiente — requiere una segunda intervención física para confirmar la optimización:** las mediciones de latencia de la sección anterior se hicieron reproduciendo los componentes con audio ya grabado, no hablando en vivo (no hay forma de sincronizar la herramienta con la voz del usuario). Falta que el usuario confirme con habla real que:
+- La respuesta ahora empieza a oírse casi de inmediato (frase por frase), no de golpe al final.
+- Las respuestas se sienten breves/naturales y no cortadas de forma rara al inicio/fin de cada frase (el streaming por oración podría sonar "a trompicones" si el corte entre frases es audible — a verificar de oído).
+- La voz `em_alex` de Kokoro suena natural, o si conviene probar `em_santa`/ajustar velocidad.
+
+Instrucción: `uv run jarvis voice --turns 1` (o `--turns 0` para varios turnos seguidos y notar que, a partir del segundo, ya no hay espera de carga de modelos).
 
 ### Test suite completo (`pytest -q`, 6677 passed) — verificación de que la voz no rompió nada
 

@@ -87,3 +87,39 @@ def play_wav_bytes(wav_bytes: bytes, device: str = "RDPSink") -> None:
         check=True,
         stderr=subprocess.DEVNULL,
     )
+
+
+def play_pcm_stream(
+    chunks: Iterator[bytes],
+    sample_rate: int,
+    device: str = "RDPSink",
+) -> None:
+    """Reproduce PCM16LE mono crudo segun va llegando (streaming real).
+
+    A diferencia de `play_wav_bytes` (que necesita el audio completo ya
+    generado), esto alimenta `paplay` por su stdin trozo a trozo: mientras
+    el proceso que llama sigue generando el siguiente trozo (p.ej. Kokoro
+    sintetizando la frase siguiente), `paplay` ya esta reproduciendo el
+    anterior -- la sintesis del resto de la respuesta se solapa con la
+    reproduccion en vez de esperar a que todo termine (T2.4b).
+    """
+    proc = subprocess.Popen(
+        [
+            "paplay",
+            f"--device={device}",
+            "--raw",
+            f"--rate={sample_rate}",
+            f"--channels={CHANNELS}",
+            f"--format={SAMPLE_FORMAT}",
+        ],
+        stdin=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    assert proc.stdin is not None
+    try:
+        for chunk in chunks:
+            proc.stdin.write(chunk)
+            proc.stdin.flush()
+    finally:
+        proc.stdin.close()
+        proc.wait()

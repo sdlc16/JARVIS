@@ -62,6 +62,13 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--vad-aggressiveness", default=3, type=int, help="Agresividad del VAD (0-3)."
 )
+@click.option(
+    "--max-tokens",
+    "max_tokens",
+    default=None,
+    type=int,
+    help="Tope de tokens de la respuesta (por defecto: breve, pensado para voz).",
+)
 def voice(
     model_name: str | None,
     engine_key: str | None,
@@ -71,6 +78,7 @@ def voice(
     tts_lang_code: str,
     num_turns: int,
     vad_aggressiveness: int,
+    max_tokens: int | None,
 ) -> None:
     """Conversa con Jarvis por voz (microfono y altavoces reales)."""
     print_banner(quiet=False)
@@ -91,9 +99,15 @@ def voice(
         console.print("[red]No hay modelo configurado.[/red]")
         sys.exit(1)
 
-    from openjarvis.voice.pipeline import VoicePipeline
+    from openjarvis.voice.pipeline import DEFAULT_VOICE_MAX_TOKENS, VoicePipeline
     from openjarvis.voice.vad import VadConfig
 
+    effective_max_tokens = (
+        max_tokens if max_tokens is not None else DEFAULT_VOICE_MAX_TOKENS
+    )
+
+    console.print("[dim]Cargando modelos de voz (una sola vez por sesion)...[/dim]")
+    t0 = time.monotonic()
     try:
         pipeline = VoicePipeline(
             engine=engine,
@@ -108,11 +122,19 @@ def voice(
     except Exception as exc:
         console.print(f"[red]No se pudo inicializar el pipeline de voz:[/red] {exc}")
         sys.exit(1)
+    warm_s = time.monotonic() - t0
+    wu = pipeline.warm_up_seconds
+    console.print(
+        f"[dim]Modelos listos en {warm_s:.2f}s "
+        f"(STT={wu.get('stt_load_s', 0):.2f}s, TTS={wu.get('tts_load_s', 0):.2f}s). "
+        f"Esto no se vuelve a pagar en los turnos siguientes de esta sesion.[/dim]"
+    )
 
     silence_ms = pipeline.vad_config.silence_timeout_ms
     console.print(
         f"[green]Jarvis escuchando[/green] (motor={engine_name}, modelo={model_name}, "
-        f"STT=faster-whisper/{stt_model_size}, TTS=kokoro/{tts_lang_code}). "
+        f"STT=faster-whisper/{stt_model_size}, TTS=kokoro/{tts_lang_code}, "
+        f"max_tokens={effective_max_tokens}). "
         f"Habla cuando quieras — se corta tras ~{silence_ms}ms de silencio."
     )
 
@@ -124,7 +146,7 @@ def voice(
             console.print("[yellow]Escuchando...[/yellow]")
             t_total = time.monotonic()
             try:
-                result = pipeline.run_turn()
+                result = pipeline.run_turn(max_tokens=effective_max_tokens)
             except EngineConnectionError as exc:
                 console.print(f"[red]Error de motor:[/red] {exc}")
                 continue
@@ -138,9 +160,17 @@ def voice(
             total = time.monotonic() - t_total
             lat = result.latency
             console.print(
-                f"[dim]latencia: vad={lat.vad_seconds:.2f}s stt={lat.stt_seconds:.2f}s "
-                f"agente={lat.agent_seconds:.2f}s tts+audio={lat.tts_seconds:.2f}s "
-                f"total={total:.2f}s | idioma={result.language} "
+                f"[dim]escucha: reaccion={lat.vad_wait_for_speech_seconds:.2f}s "
+                f"habla={lat.vad_speech_seconds:.2f}s "
+                f"silencio_final={lat.vad_trailing_silence_seconds:.2f}s[/dim]"
+            )
+            console.print(
+                f"[dim]procesamiento: stt={lat.stt_seconds:.2f}s "
+                f"agente={lat.agent_seconds:.2f}s "
+                f"tts[{lat.tts_mode}]="
+                f"1er_audio={lat.tts_time_to_first_audio_seconds:.2f}s/"
+                f"total={lat.tts_total_seconds:.2f}s "
+                f"total_turno={total:.2f}s | idioma={result.language} "
                 f"confianza={result.stt_confidence}[/dim]"
             )
     except KeyboardInterrupt:
